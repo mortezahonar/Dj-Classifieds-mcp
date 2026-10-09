@@ -324,7 +324,7 @@ export function normalizeCompanionReadInput(actionId: string, value: unknown): R
     limit: optionalInteger(input['limit'], 'limit', 1, 100, 20),
   };
 
-  if (input['search'] !== undefined) normalized['search'] = boundedText(input['search'], 'search', 200);
+  if (input['search'] !== undefined) normalized['search'] = boundedSearchText(input['search']);
   if (input['state'] !== undefined) normalized['state'] = boundedInteger(input['state'], 'state', -2, 2);
   if (input['category'] !== undefined) normalized['category'] = boundedInteger(input['category'], 'category', 1, 2_147_483_647);
   if (input['language'] !== undefined) normalized['language'] = boundedText(input['language'], 'language', 50);
@@ -475,6 +475,13 @@ function optionalInteger(value: unknown, name: string, minimum: number, maximum:
 function boundedText(value: unknown, name: string, maximumLength: number): string {
   if (typeof value !== 'string' || value.length > maximumLength || value.includes('\0')) {
     throw new Error(`${name} must be a string of at most ${maximumLength} characters.`);
+  }
+  return value;
+}
+
+function boundedSearchText(value: unknown): string {
+  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > 200 || value.includes('\0')) {
+    throw new Error('search must be a string of at most 200 UTF-8 bytes.');
   }
   return value;
 }

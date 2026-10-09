@@ -80,6 +80,25 @@ describe('Joomla-native companion action catalogue', () => {
     expect(() => normalizeCompanionReadInput('shell.run', {})).toThrow('Unknown');
   });
 
+  it('bounds search strings by UTF-8 bytes before dispatching to PHP', () => {
+    const asciiAtLimit = 'a'.repeat(200);
+    const asciiOverLimit = 'a'.repeat(201);
+    const utf8OverLimit = 'é'.repeat(101);
+    expect(utf8OverLimit.length).toBe(101);
+    expect(Buffer.byteLength(utf8OverLimit, 'utf8')).toBe(202);
+
+    for (const actionId of ['content.articles.list', 'extensions.list', 'djclassifieds.items.list']) {
+      expect(normalizeCompanionReadInput(actionId, { search: asciiAtLimit }))
+        .toMatchObject({ search: asciiAtLimit });
+      expect(normalizeCompanionReadInput(actionId, { search: 'é'.repeat(100) }))
+        .toMatchObject({ search: 'é'.repeat(100) });
+      expect(() => normalizeCompanionReadInput(actionId, { search: asciiOverLimit }))
+        .toThrow('at most 200 UTF-8 bytes');
+      expect(() => normalizeCompanionReadInput(actionId, { search: utf8OverLimit }))
+        .toThrow('at most 200 UTF-8 bytes');
+    }
+  });
+
   it('matches DJ-Classifieds list state values to the native enum', async () => {
     const php = await readFile(new URL('../companion/plugin/src/Action/CoreEntityAction.php', import.meta.url), 'utf8');
     const nativeStatesMatch = php.match(/private const STATES = \[([^\]]+)\];/u);

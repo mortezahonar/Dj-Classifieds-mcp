@@ -238,7 +238,7 @@ export function normalizeDjClassifiedsReadInput(
       offset: optionalInteger(input['offset'], 'offset', 0, 1_000_000, 0),
       limit: optionalInteger(input['limit'], 'limit', 1, 100, 20),
     };
-    if (input['search'] !== undefined) normalized['search'] = boundedText(input['search'], 'search', 200);
+    if (input['search'] !== undefined) normalized['search'] = boundedSearchText(input['search'], 'search', 200);
     if (input['state'] !== undefined) {
       const state = boundedInteger(input['state'], 'state', -2, 2);
       if (!djClassifiedsStates.includes(state)) throw new Error('state must be one of -2, 0, 1, or 2.');
@@ -409,9 +409,9 @@ function optionalInteger(value: unknown, name: string, minimum: number, maximum:
   return value === undefined ? fallback : boundedInteger(value, name, minimum, maximum);
 }
 
-function boundedText(value: unknown, name: string, maximumLength: number): string {
-  if (typeof value !== 'string' || value.length > maximumLength || value.includes('\0')) {
-    throw new Error(`${name} must be a string of at most ${maximumLength} characters.`);
+function boundedSearchText(value: unknown, name: string, maximumBytes: number): string {
+  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > maximumBytes || value.includes('\0')) {
+    throw new Error(`${name} must be a string of at most ${maximumBytes} UTF-8 bytes.`);
   }
   return value;
 }
