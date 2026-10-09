@@ -49,7 +49,7 @@ function fieldDefaultAction(CoreEntityDefinition $entity, string $operation, obj
         {
         }
 
-        public function administrator(string $component, string $modelName): object
+        public function administrator(string $component, string $modelName, ?string $legacyModelPrefix = null): object
         {
             return $this->model;
         }

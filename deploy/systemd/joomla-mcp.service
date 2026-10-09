@@ -1,6 +1,6 @@
 [Unit]
-Description=JoomEngine MCP for Joomla server
-Documentation=https://github.com/joomengine/joomla-mcp
+Description=DJ-Classifieds MCP for Joomla server
+Documentation=https://github.com/mortezahonar/Dj-Classifieds-mcp
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=120

@@ -2,11 +2,11 @@ import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
 
-const repositoryUrl = 'https://github.com/joomengine/joomla-mcp';
-const containerUrl = 'ghcr.io/joomengine/joomla-mcp';
+const repositoryUrl = 'https://github.com/mortezahonar/Dj-Classifieds-mcp';
+const upstreamUrl = 'https://github.com/joomengine/joomla-mcp';
 
-describe('repository metadata', () => {
-  it('uses the canonical JoomEngine repository coordinates everywhere users install or inspect the project', async () => {
+describe('downstream repository metadata', () => {
+  it('uses the new public repository identity and blocks upstream package publication', async () => {
     const [dockerfile, readme, service, deployment, packageSource] = await Promise.all([
       readFile('Dockerfile', 'utf8'),
       readFile('README.md', 'utf8'),
@@ -16,6 +16,7 @@ describe('repository metadata', () => {
     ]);
     const packageDocument = JSON.parse(packageSource) as {
       readonly name: string;
+      readonly private: boolean;
       readonly homepage: string;
       readonly bugs: { readonly url: string };
       readonly repository: { readonly type: string; readonly url: string };
@@ -23,6 +24,7 @@ describe('repository metadata', () => {
 
     expect(packageDocument).toMatchObject({
       name: '@joomengine/joomla-mcp',
+      private: true,
       homepage: `${repositoryUrl}#readme`,
       bugs: { url: `${repositoryUrl}/issues` },
       repository: {
@@ -30,9 +32,11 @@ describe('repository metadata', () => {
         url: `git+${repositoryUrl}.git`,
       },
     });
-    expect(dockerfile).toContain(`org.opencontainers.image.source="${repositoryUrl}"`);
     expect(readme).toContain(`git clone ${repositoryUrl}.git`);
+    expect(readme).toContain(upstreamUrl);
+    expect(dockerfile).toContain(`org.opencontainers.image.source="${repositoryUrl}"`);
     expect(service).toContain(`Documentation=${repositoryUrl}`);
-    expect(deployment).toContain(`${containerUrl}@sha256:`);
+    expect(deployment).toContain('Downstream notice');
+    expect(deployment).toContain('does not publish an OCI\n> image');
   });
 });

@@ -18,10 +18,10 @@ FROM node:22.17.1-alpine@sha256:5539840ce9d013fa13e3b9814c9353024be7ac75aca5db6d
 ARG SOURCE_DATE_EPOCH=0
 
 LABEL org.opencontainers.image.authors="Vast Development Method" \
-      org.opencontainers.image.description="Self-hosted Model Context Protocol server for Joomla 6.x" \
+      org.opencontainers.image.description="Downstream Joomla MCP server with an isolated DJ-Classifieds provider" \
       org.opencontainers.image.licenses="GPL-2.0-or-later" \
-      org.opencontainers.image.source="https://github.com/joomengine/joomla-mcp" \
-      org.opencontainers.image.title="JoomEngine MCP for Joomla" \
+      org.opencontainers.image.source="https://github.com/mortezahonar/Dj-Classifieds-mcp" \
+      org.opencontainers.image.title="DJ-Classifieds MCP for Joomla" \
       org.opencontainers.image.vendor="Vast Development Method"
 
 ENV NODE_ENV=production \

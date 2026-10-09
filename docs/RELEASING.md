@@ -1,5 +1,12 @@
 # Versioning and releases
 
+> **Downstream notice:** this is the inherited upstream release playbook and is
+> retained for provenance/reference only. This repository is marked `private`
+> in `package.json`; its upstream release and publish workflows are removed.
+> Do not use these instructions to publish `@joomengine/joomla-mcp` or an
+> upstream OCI image from this repository. See
+> [upstream synchronization and package identity](UPSTREAM_SYNC.md).
+
 One release version identifies every deliverable produced from one immutable
 source commit:
 

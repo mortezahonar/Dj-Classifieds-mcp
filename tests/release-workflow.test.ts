@@ -409,105 +409,24 @@ describe('release metadata sealing', () => {
   });
 });
 
-describe('release workflow contract', () => {
-  it('validates dispatch inputs before registry access and release-state inspection', () => {
-    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
-    const validation = workflow.indexOf('- name: Validate release inputs before registry access');
-    const login = workflow.indexOf('- uses: docker/login-action@');
-    const buildx = workflow.indexOf('- uses: docker/setup-buildx-action@');
-    const state = workflow.indexOf('name: Inspect immutable release state');
+describe('downstream release safeguards', () => {
+  it('does not enable inherited workflows that could publish upstream package coordinates', () => {
+    expect(existsSync('.github/workflows/release.yml')).toBe(false);
+    expect(existsSync('.github/workflows/publish-release.yml')).toBe(false);
 
-    expect(validation).toBeGreaterThan(-1);
-    expect(login).toBeGreaterThan(validation);
-    expect(buildx).toBeGreaterThan(validation);
-    expect(state).toBeGreaterThan(validation);
-    const step = workflow.slice(validation, login);
-    expect(step).toContain('RELEASE_STRATEGY: ${{ inputs.strategy }}');
-    expect(step).toContain('RELEASE_EXACT_VERSION: ${{ inputs.exact_version }}');
-    expect(step).toContain('run: node scripts/release/plan-version.mjs --validate-inputs');
-    expect(workflow).toContain('Leave blank unless strategy is exact');
+    const packageDocument = JSON.parse(readFileSync('package.json', 'utf8')) as {
+      readonly name: string;
+      readonly private: boolean;
+    };
+    expect(packageDocument).toMatchObject({ name: '@joomengine/joomla-mcp', private: true });
   });
 
-  it('uses current publication logic with an immutable tagged source', () => {
-    const orchestrator = readFileSync('.github/workflows/release.yml', 'utf8');
-    const publication = readFileSync('.github/workflows/publish-release.yml', 'utf8');
-
-    expect(orchestrator).toContain('strategy:');
-    expect(orchestrator).toContain('exact_version:');
-    expect(orchestrator).not.toContain('Mark the GitHub release as a prerelease');
-    expect(orchestrator).toContain('release-${{ github.repository_id }}');
-    expect(orchestrator).toContain('environment: release');
-    expect(orchestrator).toContain('/collaborators/${actor}/permission');
-    expect(orchestrator).toContain('.role_name // .permission');
-    expect(orchestrator).toContain("github.run_attempt }}\" != '1'");
-    expect(orchestrator).toContain('push --atomic origin');
-    expect(orchestrator).toContain('gh workflow run publish-release.yml');
-    expect(orchestrator).toContain('--ref main');
-    expect(orchestrator).toContain('-f "release_commit=${RELEASE_COMMIT}"');
-    expect(orchestrator).not.toContain('--ref "${RELEASE_TAG}"');
-    expect(orchestrator).not.toContain('attest-build-provenance');
-    expect(publication).toContain('release_commit:');
-    expect(publication).toContain("test \"${GITHUB_REF}\" = 'refs/heads/main'");
-    expect(publication).toContain('[[ "${RELEASE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]');
-    expect(publication).toContain('test "${tag_commit}" = "${RELEASE_COMMIT}"');
-    expect(publication).toContain('ref: ${{ needs.verify.outputs.release_commit }}');
-    expect(publication).toContain("path <<< \"${source_run}\")\" = '.github/workflows/release.yml'");
-  });
-
-  it('stages, seals, and verifies every coordinate before final publication', () => {
-    const workflow = readFileSync('.github/workflows/publish-release.yml', 'utf8');
-    const npmPublishStepStart = workflow.indexOf(
-      '- name: Publish or verify the exact npm package and channel',
-    );
-    const githubPublishStepStart = workflow.indexOf(
-      '- name: Publish the verified GitHub draft last',
-    );
-
-    expect(workflow).toContain('release-manifest.json');
-    expect(workflow).toContain('SHA256SUMS');
-    expect(workflow).toContain('actions/attest-build-provenance@');
-    expect(workflow).not.toMatch(/uses:\s+[^#\n]+@v\d/);
-    expect(workflow).toContain('--draft');
-    expect(workflow).toContain('--tag "${NPM_TAG}"');
-    expect(workflow).not.toContain('--tag candidate');
-    expect(workflow).toContain('dist.integrity');
-    expect(workflow).toContain(':sha-${{ needs.verify.outputs.release_commit }}');
-    expect(workflow).toContain('imagetools create');
-    expect(workflow).toContain('RELEASE_OCI_DIGEST');
-    expect(workflow).toContain('RELEASE_NPM_INTEGRITY');
-    expect(workflow).toContain('npm dist-tag add');
-    expect(workflow).toContain('gh attestation verify');
-    expect(workflow).toContain("steps.image-before.outputs.attested != 'true'");
-    expect(workflow).toContain('--prefer-index=false');
-    expect(workflow).toContain("release_public == 'true'");
-    expect(npmPublishStepStart).toBeGreaterThan(-1);
-    expect(githubPublishStepStart).toBeGreaterThan(npmPublishStepStart);
-    expect(workflow.indexOf('npm publish "${asset}"'))
-      .toBeLessThan(githubPublishStepStart);
-    const npmPublishStep = workflow.slice(npmPublishStepStart, githubPublishStepStart);
-    expect(npmPublishStep).toContain(
-      'asset="${GITHUB_WORKSPACE}/release-assets/joomengine-mcp-for-joomla-${RELEASE_TAG}.tgz"',
-    );
-    expect(npmPublishStep).toContain('test -f "${asset}"');
-    expect(npmPublishStep).not.toContain('asset="release-assets/');
-    expect(npmPublishStep).toContain(
-      '"${RUNNER_TEMP}/npm-registry-view" \\\n'
-      + '            "@joomengine/joomla-mcp@${RELEASE_VERSION}"',
-    );
-    expect(npmPublishStep).toContain(
-      '"${RUNNER_TEMP}/npm-registry-view" \\\n'
-      + '            "@joomengine/joomla-mcp@${NPM_TAG}"',
-    );
-    expect(workflow.indexOf('Verify commit-addressed image provenance'))
-      .toBeLessThan(workflow.indexOf('Publish or verify the versioned image coordinate'));
-    const dockerChannelStepStart = workflow.indexOf(
-      '- name: Promote and verify the Docker release channel',
-    );
-    expect(dockerChannelStepStart).toBeGreaterThan(npmPublishStepStart);
-    expect(dockerChannelStepStart).toBeLessThan(githubPublishStepStart);
-    const orchestrator = readFileSync('.github/workflows/release.yml', 'utf8');
-    expect(orchestrator).toContain('RELEASE_OCI_VERSION_DIGEST="${oci_version_digest}"');
-    expect(orchestrator).toContain('RELEASE_OCI_CHANNEL_DIGEST="${oci_channel_digest}"');
+  it('clearly labels inherited release instructions as non-applicable downstream', () => {
+    const releaseGuide = readFileSync('docs/RELEASING.md', 'utf8');
+    const deploymentGuide = readFileSync('docs/DEPLOYMENT.md', 'utf8');
+    expect(releaseGuide).toContain('Downstream notice');
+    expect(releaseGuide).toContain('upstream release and publish workflows are removed');
+    expect(deploymentGuide).toContain('does not publish an OCI\n> image');
   });
 });
 

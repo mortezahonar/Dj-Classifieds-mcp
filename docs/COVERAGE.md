@@ -43,9 +43,10 @@ not mean arbitrary stock CLI execution.
 - The companion allowlist contains 267 fixed native actions: 180 core CRUD, 28
   core model state actions, 35 DJ-Classifieds entity operations, 1 read-only
   `djclassifieds.inspect` reference action, and 23 supplemental/alias actions.
-- The edge companion catalogue contains 24 reads and 44 writes (68 descriptors):
-  selected native operations, cache clean, 28 core model-state actions, 12
-  DJ-Classifieds reads, and 5 DJ-Classifieds model-state actions.
+- The edge companion catalogue contains 24 reads and 62 writes (86 descriptors):
+  selected native operations, cache clean, 28 core model-state actions, 13
+  DJ-Classifieds reads, 18 DJ-Classifieds create/update/delete actions, and 5
+  DJ-Classifieds model-state actions.
 - Generic MCP search/read and plan/apply expose the effective API actions, all
   shared companion CRUD IDs, all 68 edge companion descriptors, and the
   companion's live effective actor permission catalogue. `joomla_action_describe`

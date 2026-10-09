@@ -5,12 +5,15 @@ const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
 const requiredExports = ['.', './adapters', './catalog', './config', './http', './live-test', './security', './package.json'];
 
 assert(manifest.name === '@joomengine/joomla-mcp', 'Unexpected npm package name.');
-assert(manifest.private !== true, 'The npm package must not be marked private.');
 assert(manifest.type === 'module', 'The npm package must remain ESM.');
 assert(manifest.types === './dist/index.d.ts', 'The root declaration entry point is missing.');
 assert(manifest.main === './dist/index.js', 'The root JavaScript entry point is missing.');
-assert(manifest.publishConfig?.access === 'public', 'Scoped package publication must be explicitly public.');
-assert(manifest.publishConfig?.provenance === true, 'npm provenance must remain enabled.');
+if (manifest.private === true) {
+  assert(manifest.publishConfig === undefined, 'A private package must not carry npm publication settings.');
+} else {
+  assert(manifest.publishConfig?.access === 'public', 'Scoped package publication must be explicitly public.');
+  assert(manifest.publishConfig?.provenance === true, 'npm provenance must remain enabled.');
+}
 
 for (const entry of requiredExports) {
   assert(manifest.exports?.[entry] !== undefined, `Missing package export ${entry}.`);
@@ -53,7 +56,7 @@ const requiredFiles = [
 ];
 
 for (const path of requiredFiles) {
-  assert(files.has(path), `Published package is missing ${path}.`);
+  assert(files.has(path), `Packed package is missing ${path}.`);
 }
 
 for (const [name, target] of Object.entries(manifest.exports)) {

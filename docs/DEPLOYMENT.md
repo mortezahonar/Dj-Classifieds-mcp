@@ -1,11 +1,20 @@
 # Deployment, upgrade, and rollback
 
+> **Downstream notice:** this deployment guide is inherited from
+> `joomengine/joomla-mcp`. This downstream repository does not publish an OCI
+> image or an npm package; the `ghcr.io/joomengine/joomla-mcp` and npm release
+> coordinates below refer to upstream and do not contain the DJ-Classifieds
+> additions from this repository. For downstream deployment, build from a
+> reviewed checkout and retain the exact source commit. See
+> [DJ-Classifieds provider](DJ_CLASSIFIEDS.md) and
+> [upstream synchronization](UPSTREAM_SYNC.md).
+
 ## Choose the deployment path
 
 | Need | Recommended path |
 |---|---|
 | Local developer/desktop MCP client | Source build with stdio |
-| Remote API-only edge | Pinned OCI image with Compose or an orchestrator |
+| Remote API-only edge | Image built locally from a reviewed downstream checkout; this repository has no published OCI image |
 | Remote edge as a host service | Source/release build with systemd |
 | Joomla-native companion actions | Host deployment with PHP and direct access to the fixed Joomla root |
 

@@ -28,7 +28,7 @@ foreach (['templates.site-styles' => 0, 'templates.administrator-styles' => 1] a
         };
         $provider = new class ($model) implements ModelProviderInterface {
             public function __construct(private object $model) {}
-            public function administrator(string $component, string $modelName): object { return $this->model; }
+            public function administrator(string $component, string $modelName, ?string $legacyModelPrefix = null): object { return $this->model; }
         };
         $entity = null;
         foreach (CoreEntityCatalogue::all() as $candidate) {

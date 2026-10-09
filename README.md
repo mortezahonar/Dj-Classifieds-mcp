@@ -1,6 +1,25 @@
-# JoomEngine MCP for Joomla
+# DJ-Classifieds MCP for Joomla
 
-[![CI](https://github.com/joomengine/joomla-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/joomengine/joomla-mcp/actions/workflows/ci.yml) [![Release](https://github.com/joomengine/joomla-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/joomengine/joomla-mcp/actions/workflows/release.yml) [![Publish](https://github.com/joomengine/joomla-mcp/actions/workflows/publish-release.yml/badge.svg)](https://github.com/joomengine/joomla-mcp/actions/workflows/publish-release.yml) [![npm](https://img.shields.io/npm/v/%40joomengine%2Fjoomla-mcp?label=npm)](https://www.npmjs.com/package/@joomengine/joomla-mcp) [![Joomla](https://img.shields.io/badge/Joomla-6.1%2B-5091CD?logo=joomla&logoColor=white)](https://www.joomla.org/) [![Node](https://img.shields.io/badge/Node-22.12%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/) [![License](https://img.shields.io/badge/License-GPL--2.0%2B-blue)](LICENSE)
+[![CI](https://github.com/mortezahonar/Dj-Classifieds-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mortezahonar/Dj-Classifieds-mcp/actions/workflows/ci.yml) [![Joomla](https://img.shields.io/badge/Joomla-6.1%2B-5091CD?logo=joomla&logoColor=white)](https://www.joomla.org/) [![Node](https://img.shields.io/badge/Node-22.12%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/) [![License](https://img.shields.io/badge/License-GPL--2.0%2B-blue)](LICENSE)
+
+This is a **public downstream repository** based on
+[`joomengine/joomla-mcp`](https://github.com/joomengine/joomla-mcp). It preserves
+the upstream Git history and merges upstream `main`; the DJ-Classifieds-specific
+implementation is isolated behind its own TypeScript and PHP providers. The
+starting code is the supplied
+[`J6-djcf-v1` branch](https://github.com/mortezahonar/joomla-mcp/tree/J6-djcf-v1),
+including provider-isolation commit
+[`23142d7`](https://github.com/mortezahonar/joomla-mcp/commit/23142d75cd428b9562785c45e859b998ab2b1cff).
+This downstream project is not an official JoomEngine or DJ-Classifieds product.
+
+- [DJ-Classifieds provider: actions, setup, security and verification status](docs/DJ_CLASSIFIEDS.md)
+- [Upstream provenance and safe synchronization](docs/UPSTREAM_SYNC.md)
+
+The upstream source code remains at the repository root; the provider is a
+feature boundary, not a submodule. `package.json` is private and this repository
+does not publish the upstream npm package or OCI image. The inherited upstream
+package/library documentation below describes the base project; use a locally
+built package from this checkout when testing downstream changes.
 
 ## Project notice: use the Joomla-native MCP package
 
@@ -83,7 +102,7 @@ in the repositories linked in the project notice above.
 - Reviewed field allowlists for every CRUD mutation family and exact schemas for fixed-shape media, privacy, plugin, language-override, application-configuration, and Joomla Update mutations.
 - Explicit source-only gates for routes that are defective in Joomla 6.1 or require unimplemented runtime secret/schema discovery.
 - Joomla-native local actions through a fixed companion allowlist.
-- Optional live DJ-Classifieds reference resource (`joomla://catalog/djclassifieds/{site}`) exposing tables, columns, relations, models, views, and plugins, gated by the central `features.djclassifiedsReferenceResource` configuration switch.
+- DJ-Classifieds provider for six entity families, with bounded reads, allowlisted writes, guarded state operations and an optional live reference resource (`joomla://catalog/djclassifieds/{site}`); see [DJ-Classifieds provider documentation](docs/DJ_CLASSIFIEDS.md).
 - Read-only discovery, safe configuration filtering, and immutable multi-site aliases.
 - Guarded writes using explicit principal-bound operator grants (`once`, `30-minutes`, or `indefinite`), preview, signed one-time plans, idempotency, locks, audit events, and verification where supported.
 - MCP over stdio or authenticated Streamable HTTP.
@@ -113,11 +132,18 @@ normal permission and confirmation flow.
 
 ## Use as a library dependency
 
-Install the public, versioned package:
+This downstream repository is not published to npm. The package name is retained
+for local compatibility with the upstream library API; build and pack this
+checkout locally to test its DJ-Classifieds changes:
 
 ```bash
-npm install @joomengine/joomla-mcp@^0.8.0
+npm ci
+npm run build
+npm pack
 ```
+
+The npm registry package `@joomengine/joomla-mcp` is the upstream release and
+does not contain downstream commits from this repository.
 
 Create a transport-neutral application without starting a process or binding a
 port:
@@ -158,8 +184,8 @@ recovery.
 ## Install and validate
 
 ```bash
-git clone https://github.com/joomengine/joomla-mcp.git
-cd joomla-mcp
+git clone https://github.com/mortezahonar/Dj-Classifieds-mcp.git
+cd Dj-Classifieds-mcp
 npm ci
 cp config/sites.example.json config/sites.json
 npm run validate

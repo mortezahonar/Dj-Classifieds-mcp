@@ -87,7 +87,7 @@ test('validated JSON parameter objects become native Joomla arrays only at model
         {
         }
 
-        public function administrator(string $component, string $modelName): object
+        public function administrator(string $component, string $modelName, ?string $legacyModelPrefix = null): object
         {
             return $this->model;
         }
@@ -138,7 +138,7 @@ function assertSchemaContainers(mixed $schema): void
 test('complete companion description serializes schema mapping and list keywords correctly', static function (): void {
     $registry = (new JoomlaActionRegistryFactory(new stdClass()))->create();
     $description = json_decode((new DescriptionService($registry, $GLOBALS['allow']))->toJson(), false, 64, JSON_THROW_ON_ERROR);
-    expect(count($description->actions) === 231, 'Schema audit omitted catalogue actions.');
+    expect(count($description->actions) === 267, 'Schema audit omitted catalogue actions.');
 
     foreach ($description->actions as $action) {
         assertSchemaContainers($action->inputSchema);

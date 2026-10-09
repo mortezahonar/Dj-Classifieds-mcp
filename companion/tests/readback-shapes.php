@@ -15,7 +15,7 @@ function articleReadbackAction(object $model, string $operation): CoreEntityActi
         {
         }
 
-        public function administrator(string $component, string $modelName): object
+        public function administrator(string $component, string $modelName, ?string $legacyModelPrefix = null): object
         {
             return $this->model;
         }

@@ -34,7 +34,6 @@ for file in \
   deploy/compose.yaml \
   deploy/sites.container.example.json \
   deploy/systemd/joomla-mcp.service \
-  .github/workflows/release.yml \
   scripts/release/verify-version.mjs \
   scripts/deploy/compose-rollout.sh \
   scripts/deploy/healthcheck.mjs \
@@ -42,6 +41,12 @@ for file in \
   scripts/deploy/wait-healthy.mjs; do
   [[ -s "$file" ]] || fail "required artifact is missing or empty: $file"
 done
+
+for workflow in .github/workflows/release.yml .github/workflows/publish-release.yml; do
+  [[ ! -e "$workflow" ]] || fail "upstream publication workflow must not be enabled: $workflow"
+done
+node -e 'if (require("./package.json").private !== true) process.exit(1)' \
+  || fail 'downstream npm package must remain private'
 
 ./tests/fixtures/static-joomengine.test.sh
 
@@ -82,6 +87,7 @@ assert_contains Dockerfile 'USER 10001:10001'
 assert_contains Dockerfile 'STOPSIGNAL SIGTERM'
 assert_contains Dockerfile 'HEALTHCHECK --interval=30s'
 assert_contains Dockerfile 'org.opencontainers.image.licenses="GPL-2.0-or-later"'
+assert_contains Dockerfile 'org.opencontainers.image.source="https://github.com/mortezahonar/Dj-Classifieds-mcp"'
 assert_contains Dockerfile 'COPY --chown=10001:10001 LICENSE ./LICENSE'
 assert_not_contains Dockerfile ':latest'
 
@@ -112,12 +118,6 @@ assert_not_contains deploy/systemd/joomla-mcp.service 'MemoryDenyWriteExecute=tr
 
 assert_contains scripts/deploy/compose-rollout.sh 'JOOMLA_MCP_READINESS_PATH:-/readyz'
 assert_contains scripts/deploy/compose-rollout.sh "wait_ready \"\$timeout\""
-
-assert_contains .github/workflows/release.yml 'workflow_dispatch:'
-assert_contains .github/workflows/release.yml 'joomengine-mcp-for-joomla-deployment-'
-assert_contains .github/workflows/release.yml 'pkg_joomlamcp-'
-assert_contains .github/workflows/release.yml 'spdx.json'
-assert_contains .github/workflows/release.yml 'SHA256SUMS'
 
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck scripts/deploy/compose-rollout.sh scripts/deploy/systemd-rollout.sh scripts/deploy/validate.sh scripts/fixtures/run-joomengine.sh tests/deploy/static-deployment.test.sh tests/fixtures/static-joomengine.test.sh
