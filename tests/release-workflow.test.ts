@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -114,12 +115,85 @@ describe('release version planning', () => {
     })).toThrow('older than repository version');
   });
 
+  it.each(['auto', 'current', 'patch', 'minor', 'major', 'prerelease', 'promote'])(
+    'explains how to recover from exact_version supplied with %s',
+    (strategy) => {
+      expect(() => plan({ currentVersion: '0.8.0', strategy, exactVersion: '0.8.0' }))
+        .toThrow('Dispatch a new run with exact_version blank');
+    },
+  );
+
+  it('releases the prepared version with current and a blank exact input without a bump', () => {
+    expect(plan({
+      currentVersion: '0.8.0',
+      strategy: ' current ',
+      exactVersion: '  ',
+      existingVersions: ['0.7.0'],
+    })).toMatchObject({
+      strategy: 'current', target: '0.8.0', tag: 'v0.8.0', needsBump: false,
+    });
+    expect(plan({
+      currentVersion: '0.8.0', strategy: ' exact ', exactVersion: ' 0.8.0 ',
+    })).toMatchObject({ strategy: 'exact', target: '0.8.0', needsBump: false });
+  });
+
   it('advances numeric prereleases and rejects numeric overflow', () => {
     expect(incrementPrerelease('1.2.3-1', '1')).toBe('1.2.3-2');
     expect(() => incrementStable('9007199254740991.0.0', 'major'))
       .toThrow('must not exceed');
     expect(() => incrementPrerelease('1.2.3-rc.9007199254740991', 'rc'))
       .toThrow('must not exceed');
+  });
+});
+
+describe('release input preflight', () => {
+  it.each([
+    ['auto', '', ''],
+    [' current ', '  ', ''],
+    [' exact ', ' 0.8.0 ', ''],
+    ['exact', '0.9.0-rc.1', ''],
+    ['auto', '0.8.0', 'exact_version may only be supplied'],
+    ['current', '0.8.0', 'exact_version may only be supplied'],
+    ['exact', '', 'strategy=exact requires exact_version'],
+    ['exact', '  ', 'strategy=exact requires exact_version'],
+    ['exact', 'v0.8.0', 'Invalid release SemVer'],
+    ['exact', '0.8.0+build.1', 'Invalid release SemVer'],
+    ['unsupported', '', 'Unsupported release strategy'],
+  ])('validates %s / %j without repository or registry state', (strategy, exactVersion, error) => {
+    const fixture = mkdtempSync(join(tmpdir(), 'joomla-mcp-inputs-'));
+    try {
+      const output = join(fixture, 'output');
+      const summary = join(fixture, 'summary');
+      const result = spawnSync(
+        process.execPath,
+        [resolve('scripts/release/plan-version.mjs'), '--validate-inputs'],
+        {
+          cwd: fixture,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            RELEASE_STRATEGY: strategy,
+            RELEASE_EXACT_VERSION: exactVersion,
+            RELEASE_CURRENT_VERSION: 'unavailable',
+            RELEASE_CURRENT_STATE: 'unavailable',
+            GITHUB_OUTPUT: output,
+            GITHUB_STEP_SUMMARY: summary,
+          },
+        },
+      );
+      if (error === '') {
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toBe('Release inputs are valid.\n');
+      } else {
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain(error);
+        expect(result.stdout).toBe('');
+      }
+      expect(existsSync(output)).toBe(false);
+      expect(existsSync(summary)).toBe(false);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 });
 
@@ -226,6 +300,8 @@ describe('release recovery state', () => {
     expectedNpmIntegrity: validNpmIntegrity,
     npmChannelVersion: stableVersion,
     ociDigest: validOciDigest,
+    ociVersionDigest: validOciDigest,
+    ociChannelDigest: validOciDigest,
     expectedOciDigest: validOciDigest,
   };
 
@@ -235,6 +311,12 @@ describe('release recovery state', () => {
     expect(resolveReleaseState({ ...complete, npmIntegrity: '' })).toBe('partial');
     expect(resolveReleaseState({ ...complete, npmChannelVersion: '1.2.2' })).toBe('partial');
     expect(resolveReleaseState({ ...complete, ociDigest: '' })).toBe('partial');
+    expect(resolveReleaseState({ ...complete, ociVersionDigest: '' })).toBe('partial');
+    expect(resolveReleaseState({ ...complete, ociChannelDigest: '' })).toBe('partial');
+    expect(resolveReleaseState({
+      ...complete,
+      ociChannelDigest: `sha256:${'b'.repeat(64)}`,
+    })).toBe('partial');
   });
 
   it('recovers tag-only and draft progress from the immutable source anchor', () => {
@@ -260,6 +342,18 @@ describe('release recovery state', () => {
       currentVersion: stableVersion,
       ociDigest: validOciDigest,
     })).toThrow('without an immutable source tag');
+    expect(() => resolveReleaseState({
+      currentVersion: stableVersion,
+      ociVersionDigest: validOciDigest,
+    })).toThrow('without an immutable source tag');
+    expect(resolveReleaseState({
+      currentVersion: stableVersion,
+      ociChannelDigest: validOciDigest,
+    })).toBe('unreleased');
+    expect(() => resolveReleaseState({
+      ...complete,
+      ociVersionDigest: 'invalid',
+    })).toThrow('canonical OCI SHA-256 digest');
     expect(() => resolveReleaseState({ ...complete, assetsValid: false }))
       .toThrow('do not satisfy');
     expect(() => resolveReleaseState({ ...complete, githubPrerelease: true }))
@@ -316,6 +410,24 @@ describe('release metadata sealing', () => {
 });
 
 describe('release workflow contract', () => {
+  it('validates dispatch inputs before registry access and release-state inspection', () => {
+    const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+    const validation = workflow.indexOf('- name: Validate release inputs before registry access');
+    const login = workflow.indexOf('- uses: docker/login-action@');
+    const buildx = workflow.indexOf('- uses: docker/setup-buildx-action@');
+    const state = workflow.indexOf('name: Inspect immutable release state');
+
+    expect(validation).toBeGreaterThan(-1);
+    expect(login).toBeGreaterThan(validation);
+    expect(buildx).toBeGreaterThan(validation);
+    expect(state).toBeGreaterThan(validation);
+    const step = workflow.slice(validation, login);
+    expect(step).toContain('RELEASE_STRATEGY: ${{ inputs.strategy }}');
+    expect(step).toContain('RELEASE_EXACT_VERSION: ${{ inputs.exact_version }}');
+    expect(step).toContain('run: node scripts/release/plan-version.mjs --validate-inputs');
+    expect(workflow).toContain('Leave blank unless strategy is exact');
+  });
+
   it('uses current publication logic with an immutable tagged source', () => {
     const orchestrator = readFileSync('.github/workflows/release.yml', 'utf8');
     const publication = readFileSync('.github/workflows/publish-release.yml', 'utf8');
@@ -388,6 +500,14 @@ describe('release workflow contract', () => {
     );
     expect(workflow.indexOf('Verify commit-addressed image provenance'))
       .toBeLessThan(workflow.indexOf('Publish or verify the versioned image coordinate'));
+    const dockerChannelStepStart = workflow.indexOf(
+      '- name: Promote and verify the Docker release channel',
+    );
+    expect(dockerChannelStepStart).toBeGreaterThan(npmPublishStepStart);
+    expect(dockerChannelStepStart).toBeLessThan(githubPublishStepStart);
+    const orchestrator = readFileSync('.github/workflows/release.yml', 'utf8');
+    expect(orchestrator).toContain('RELEASE_OCI_VERSION_DIGEST="${oci_version_digest}"');
+    expect(orchestrator).toContain('RELEASE_OCI_CHANNEL_DIGEST="${oci_channel_digest}"');
   });
 });
 

@@ -18,7 +18,7 @@ php companion/tests/run.php
 php companion/build.php
 ```
 
-The build produces `companion/dist/pkg_joomlamcp-0.7.0.zip`. Install or upgrade
+The build produces `companion/dist/pkg_joomlamcp-0.8.0.zip`. Install or upgrade
 it through Joomla's native extension installer. First installation enables the
 console plugin through Joomla's extension table lifecycle; upgrades preserve
 the operator's enabled/disabled state. Then:
@@ -110,7 +110,9 @@ risk, supported Joomla range, declared ACL, and effective permission for the
 configured actor. Refresh it after package installation/upgrade, Joomla upgrade,
 actor ACL changes, or plugin configuration changes.
 
-The companion 0.7.0 allowlist contains 267 actions:
+The combined companion 0.8.0 allowlist contains 267 actions: the 231 upstream
+core and operational actions plus 36 DJ-Classifieds actions (35 entity actions
+and the read-only `djclassifieds.inspect` action).
 
 - 180 list/get/create/update/delete actions for the 36 fixed core entity bases;
 - 28 model-state actions where the fixed Joomla model supports state changes;
@@ -126,7 +128,7 @@ method, path, URL, shell, PHP, SQL, or filesystem primitive.
 
 ## Native operational actions
 
-Companion 0.7.0 includes these fixed Joomla-native adapters:
+Companion 0.8.0 includes these fixed Joomla-native adapters:
 
 | Action | Native Joomla capability |
 |---|---|

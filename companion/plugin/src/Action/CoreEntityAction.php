@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace VDM\Plugin\Console\JoomlaMcp\Action;
 
+use JsonException;
 use JsonSerializable;
 use Joomla\CMS\Factory;
+use stdClass;
 use Throwable;
 use VDM\Plugin\Console\JoomlaMcp\Contract\ActionInterface;
 use VDM\Plugin\Console\JoomlaMcp\Contract\CoreEntityPayloadHookInterface;
@@ -14,6 +16,8 @@ use VDM\Plugin\Console\JoomlaMcp\Domain\ActionDescriptor;
 use VDM\Plugin\Console\JoomlaMcp\Domain\ActionException;
 use VDM\Plugin\Console\JoomlaMcp\Domain\CoreEntityDefinition;
 use VDM\Plugin\Console\JoomlaMcp\Domain\Input;
+use VDM\Plugin\Console\JoomlaMcp\Joomla\ModelListPage;
+use VDM\Plugin\Console\JoomlaMcp\Joomla\TemplateStyleInheritance;
 
 /**
  * Executes one operation for one fixed CoreEntityDefinition.
@@ -95,12 +99,10 @@ final readonly class CoreEntityAction implements ActionInterface
         $this->setModelState($model);
         $model->setState('list.start', $offset);
         $model->setState('list.limit', $limit);
-        $model->setState('list.ordering', $order);
+        $model->setState('list.ordering', $this->nativeOrdering($model, $order));
         $model->setState('list.direction', $direction);
 
-        if ($search !== '') {
-            $model->setState('filter.search', $search);
-        }
+        $model->setState('filter.search', $search);
 
         if (array_key_exists('state', $input)) {
             $model->setState(
@@ -110,7 +112,13 @@ final readonly class CoreEntityAction implements ActionInterface
         }
 
         try {
-            $rawItems = $model->getItems();
+            $page = ModelListPage::read($model, $offset, $limit);
+            $rawItems = $page['items'];
+        } catch (ActionException $exception) {
+            throw new ActionException(
+                $exception->errorCode,
+                $exception->getMessage() . $this->modelFailureDetail($model),
+            );
         } catch (Throwable $exception) {
             throw new ActionException(
                 'MODEL_OPERATION_FAILED',
@@ -133,12 +141,6 @@ final readonly class CoreEntityAction implements ActionInterface
             }
         }
 
-        try {
-            $total = method_exists($model, 'getTotal') ? (int) $model->getTotal() : count($items);
-        } catch (Throwable) {
-            $total = count($items);
-        }
-
         return [
             'entity' => $this->entity->id,
             'items' => $items,
@@ -146,7 +148,7 @@ final readonly class CoreEntityAction implements ActionInterface
                 'offset' => $offset,
                 'limit' => $limit,
                 'count' => count($items),
-                'total' => max(0, $total),
+                'total' => $page['total'],
             ],
         ];
     }
@@ -172,7 +174,7 @@ final readonly class CoreEntityAction implements ActionInterface
             throw new ActionException('NOT_FOUND', sprintf('%s %d was not found.', ucfirst($this->entity->label), $id));
         }
 
-        $record = $this->normalise($item);
+        $record = $this->normalise($item, $model, $id);
         $returnedId = $record[$this->entity->primaryKey] ?? $record['id'] ?? null;
 
         if ($returnedId !== null && (int) $returnedId !== $id) {
@@ -192,7 +194,22 @@ final readonly class CoreEntityAction implements ActionInterface
             throw new ActionException('INVALID_INPUT', 'Create data must contain at least one allowed field.');
         }
 
+        // Joomla's administrator field form submits an empty default value.
+        // Supply it only for a new field with an omitted key; updates and
+        // explicit values retain their native model semantics.
+        if ($this->entity->component === 'com_fields' && $this->entity->itemModel === 'Field'
+            && !array_key_exists('default_value', $data)) {
+            $data['default_value'] = '';
+        }
+
+        $inheritance = in_array($this->entity->id, ['templates.site-styles', 'templates.administrator-styles'], true)
+            ? TemplateStyleInheritance::resolve($this->models, $data['template'] ?? null, (int) $this->entity->defaults['client_id'])
+            : null;
         $plan = $this->writePlan('create', null, array_keys($data));
+        if ($inheritance !== null) {
+            $plan['item'] = ['template' => $data['template'], 'client_id' => (int) $this->entity->defaults['client_id']] + $inheritance;
+            $data = array_merge($data, $inheritance);
+        }
 
         if (Input::boolean($input, 'dryRun', true)) {
             return $plan;
@@ -427,16 +444,110 @@ final readonly class CoreEntityAction implements ActionInterface
     }
 
     /** @param object|array<string, mixed> $item @return array<string, mixed> */
-    private function normalise(object|array $item): array
+    private function normalise(object|array $item, ?object $model = null, ?int $id = null): array
     {
         $source = is_object($item) ? get_object_vars($item) : $item;
+        $source = $this->storedJsonFields($source, $model, $id);
         $result = [];
 
         foreach ($this->entity->readFields as $field) {
             $result[$field] = $this->safeOutput($source[$field] ?? null);
         }
 
+        if (array_key_exists('id', $result) && $result['id'] === null && $this->entity->primaryKey !== 'id') {
+            $result['id'] = $result[$this->entity->primaryKey] ?? null;
+        }
+
         return $result;
+    }
+
+    /**
+     * Restore stored JSON shapes after a native single-item model read.
+     *
+     * Joomla item models can convert Registry mappings to arrays before this
+     * adapter sees them. Only the already-readable, fixed Registry fields are
+     * restored from the selected native table, after matching item identity.
+     * List reads never load a table for each row.
+     *
+     * @param array<string, mixed> $source
+     * @return array<string, mixed>
+     */
+    private function storedJsonFields(array $source, ?object $model, ?int $id): array
+    {
+        $returnedId = $source[$this->entity->primaryKey] ?? $source['id'] ?? null;
+        $fields = array_intersect(
+            ['params', 'fieldparams', 'metadata', 'attribs', 'images', 'urls'],
+            $this->entity->readFields,
+            array_keys($source),
+        );
+
+        if ($model === null || $id === null
+            || (!is_int($returnedId) && !(is_string($returnedId) && ctype_digit($returnedId)))
+            || (int) $returnedId < 1 || (int) $returnedId !== $id
+            || $fields === [] || !method_exists($model, 'getTable')) {
+            return $source;
+        }
+
+        try {
+            $table = $model->getTable();
+
+            if (!is_object($table) || !method_exists($table, 'load') || $table->load($id) !== true) {
+                return $source;
+            }
+
+            foreach ($fields as $field) {
+                $raw = $table->{$field} ?? null;
+
+                if (!is_string($raw) || $raw === '' || strlen($raw) > 524_288) {
+                    continue;
+                }
+
+                try {
+                    $decoded = json_decode($raw, false, 64, JSON_THROW_ON_ERROR);
+                    $storedContent = json_decode($raw, true, 64, JSON_THROW_ON_ERROR);
+                    $modelContent = json_decode(
+                        json_encode($this->safeOutput($source[$field]), JSON_THROW_ON_ERROR),
+                        true,
+                        64,
+                        JSON_THROW_ON_ERROR,
+                    );
+                } catch (JsonException) {
+                    continue;
+                }
+
+                // Native models may redact or transform values. Recover only
+                // object/list shape when the bounded visible content matches.
+                if (($decoded instanceof stdClass || is_array($decoded))
+                    && $this->sameJsonContent($storedContent, $modelContent)) {
+                    $source[$field] = $decoded;
+                }
+            }
+        } catch (Throwable) {
+            // Keep the native evidence on failure. A write's strict read-back
+            // still reports uncertainty if that evidence disagrees with intent.
+        }
+
+        return $source;
+    }
+
+    /** Compare content strictly, ignoring only JSON container shape and key order. */
+    private function sameJsonContent(mixed $left, mixed $right): bool
+    {
+        if (!is_array($left) || !is_array($right)) {
+            return $left === $right;
+        }
+
+        if (count($left) !== count($right)) {
+            return false;
+        }
+
+        foreach ($left as $key => $value) {
+            if (!array_key_exists($key, $right) || !$this->sameJsonContent($value, $right[$key])) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function safeOutput(mixed $value, int $depth = 0): mixed
@@ -457,7 +568,9 @@ final readonly class CoreEntityAction implements ActionInterface
             }
         }
 
-        if (is_object($value)) {
+        $object = is_object($value);
+
+        if ($object) {
             $value = get_object_vars($value);
         }
 
@@ -475,14 +588,14 @@ final readonly class CoreEntityAction implements ActionInterface
             $result[$key] = $this->safeOutput($nested, $depth + 1);
         }
 
-        return $result;
+        return $object && array_is_list($result) ? (object) $result : $result;
     }
 
     /** @param array<string, mixed> $payload */
     private function save(object $model, array $payload): void
     {
         try {
-            $saved = $model->save($payload);
+            $saved = $model->save($this->nativeModelValue($payload));
         } catch (Throwable $exception) {
             throw new ActionException(
                 'MODEL_OPERATION_FAILED',
@@ -496,6 +609,24 @@ final readonly class CoreEntityAction implements ActionInterface
                 sprintf('Joomla did not save %s.%s', $this->entity->label, $this->modelFailureDetail($model)),
             );
         }
+    }
+
+    /** Convert validated JSON mappings to Joomla's native form-data arrays. */
+    private function nativeModelValue(mixed $value): mixed
+    {
+        if ($value instanceof stdClass) {
+            $value = get_object_vars($value);
+        }
+
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        foreach ($value as $key => $nested) {
+            $value[$key] = $this->nativeModelValue($nested);
+        }
+
+        return $value;
     }
 
     /** @return array<string, mixed> */
@@ -577,7 +708,7 @@ final readonly class CoreEntityAction implements ActionInterface
         try {
             $item = $model->getItem($id);
 
-            return is_object($item) || is_array($item) ? $this->normalise($item) : null;
+            return is_object($item) || is_array($item) ? $this->normalise($item, $model, $id) : null;
         } catch (Throwable) {
             return null;
         }
@@ -755,6 +886,21 @@ final readonly class CoreEntityAction implements ActionInterface
         )));
 
         return $fields === [] ? [$this->entity->readFields[0]] : $fields;
+    }
+
+    private function nativeOrdering(object $model, string $field): string
+    {
+        if ($field === 'id') {
+            $field = $this->entity->primaryKey;
+        }
+
+        // Use only aliases explicitly admitted by the selected native model.
+        // Language lists join access levels, whose title otherwise collides.
+        if (method_exists($model, 'isValidFilterColumn') && $model->isValidFilterColumn('a.' . $field)) {
+            return 'a.' . $field;
+        }
+
+        return $field;
     }
 
     /** @return array<string, mixed> */

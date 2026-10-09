@@ -310,7 +310,11 @@ export function resolveJoomlaReadRequest(
   return Object.freeze({ method: 'GET', path, query });
 }
 
-export function resolveJoomlaWriteRequest(actionId: string, input: unknown): ResolvedWriteRequest {
+export function resolveJoomlaWriteRequest(
+  actionId: string,
+  input: unknown,
+  resolvedCustomFields: readonly string[] = [],
+): ResolvedWriteRequest {
   const action = getJoomlaWriteAction(actionId);
 
   if (action === undefined) {
@@ -343,7 +347,7 @@ export function resolveJoomlaWriteRequest(actionId: string, input: unknown): Res
   }
   const body = values['data'] === undefined
     ? undefined
-    : withFixedMutationDefaults(action.id, normalizeMutationBody(values['data'], action));
+    : withFixedMutationDefaults(action.id, normalizeMutationBody(values['data'], action, resolvedCustomFields));
   if (body !== undefined) assertMutationBodySize(body);
   const etag = values['etag'] === undefined ? undefined : normalizeEtag(values['etag']);
 
@@ -409,7 +413,15 @@ function withFixedMutationDefaults(
 ): Readonly<Record<string, unknown>> {
   const base = joomlaCrudBases.find((candidate) => actionId.startsWith(`${candidate.id}.`));
   if (base === undefined) return body;
-  const normalized = withJoomlaDerivedMutationFields(base.id, body);
+  // The administrator field form submits an empty default for a new field.
+  // Omitting it leaves SQL NULL, which Joomla later passes to DOMCdataSection.
+  // This is a fallback, not fixed controller state: explicit values must win,
+  // and partial updates must never reset an existing field's default.
+  const createBody = base.id.startsWith('fields.') && actionId === `${base.id}.create` &&
+    !Object.hasOwn(body, 'default_value')
+    ? Object.freeze({ ...body, default_value: '' })
+    : body;
+  const normalized = withJoomlaDerivedMutationFields(base.id, createBody);
   const fixed = Object.fromEntries(
     Object.entries(base.controllerDefaults).filter(([key]) => key !== 'component'),
   );
@@ -498,6 +510,7 @@ const forbiddenMutationKeys = new Set(['__proto__', 'prototype', 'constructor'])
 function normalizeMutationBody(
   value: unknown,
   action: WriteActionDescriptor,
+  resolvedCustomFields: readonly string[] = [],
 ): Readonly<Record<string, unknown>> {
   const body = assertPlainInput(value);
 
@@ -505,9 +518,8 @@ function normalizeMutationBody(
     throw new Error('A Joomla mutation body must contain at least one field.');
   }
 
-  validateJsonValue(body, 0);
-  assertMutationBodySize(body);
-  validateMutationSchema(body, action);
+  validateJoomlaMutationJson(body);
+  validateMutationSchema(body, action, resolvedCustomFields);
 
   return body;
 }
@@ -521,6 +533,7 @@ function assertMutationBodySize(body: Readonly<Record<string, unknown>>): void {
 function validateMutationSchema(
   body: Readonly<Record<string, unknown>>,
   action: WriteActionDescriptor,
+  resolvedCustomFields: readonly string[] = [],
 ): void {
   const schema = action.inputSchema.properties['data'];
 
@@ -540,7 +553,7 @@ function validateMutationSchema(
   }
 
   if (schema['additionalProperties'] === false && properties !== undefined) {
-    const unknown = Object.keys(body).filter((field) => !(field in properties)).sort();
+    const unknown = Object.keys(body).filter((field) => !Object.hasOwn(properties, field) && !resolvedCustomFields.includes(field)).sort();
 
     if (unknown.length > 0) {
       throw new Error(`Unsupported ${action.id} data properties: ${unknown.join(', ')}.`);
@@ -650,6 +663,13 @@ function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown
     && value !== null
     && !Array.isArray(value)
     && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+/** Applies the same JSON, key, nesting and size limits before site metadata is requested. */
+export function validateJoomlaMutationJson(value: unknown): void {
+  const body = assertPlainInput(value);
+  validateJsonValue(body, 0);
+  assertMutationBodySize(body);
 }
 
 function validateJsonValue(value: unknown, depth: number): void {

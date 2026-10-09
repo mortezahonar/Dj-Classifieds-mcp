@@ -1,5 +1,13 @@
 # JoomEngine MCP for Joomla companion
 
+> **Current installation:** this page documents the TypeScript proof-of-concept
+> stack. For new installations, use the stable
+> [MCP package](https://github.com/joomengine/mcp_package/tags), then follow the
+> [Joomla setup guide](https://github.com/joomengine/mcp_component/blob/main/docs/GETTING-STARTED.md)
+> and [AI / direct client guide](https://github.com/joomengine/mcp_component/blob/main/docs/CLIENT-CONNECTIONS.md).
+> The current PHP client is maintained in
+> [`mcp_client`](https://github.com/joomengine/mcp_client).
+
 This directory builds `pkg_joomlamcp`, an installable Joomla package containing
 the `console/joomlamcp` plugin. It requires Joomla 6.1 or later and PHP 8.3 or
 later.
@@ -34,7 +42,7 @@ by default and require confirmation from the TypeScript edge before execution.
 High-risk actions return pre/post state, verification, and recovery metadata
 wherever Joomla exposes a reliable read-back.
 
-The production operations available in companion 0.7.0 are:
+The production operations available in companion 0.8.0 are:
 
 | Action | Native Joomla 6.1+ capability |
 |---|---|
@@ -68,7 +76,7 @@ php companion/build.php
 The package ZIP is written to `companion/dist/`. See
 [`docs/PHP_COMPANION.md`](../docs/PHP_COMPANION.md) for installation and protocol examples.
 
-Install or upgrade the generated `pkg_joomlamcp-0.7.0.zip` with Joomla's native
+Install or upgrade the generated `pkg_joomlamcp-0.8.0.zip` with Joomla's native
 Extensions installer. First installation enables the console plugin through
 Joomla's native extension lifecycle; upgrades preserve its current enabled
 state. Then confirm that the dedicated MCP actor still has only

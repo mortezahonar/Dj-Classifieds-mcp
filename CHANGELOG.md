@@ -5,8 +5,49 @@ follow Semantic Versioning.
 
 ## Unreleased
 
+## [0.8.0] - 2026-09-30
+
+### Changed
+
+- Align Docker images with the npm release version: retain commit-addressed and
+  v-prefixed tags and publish an immutable bare SemVer tag for the same digest.
+- Promote the Docker `latest` channel only after verified stable npm publication;
+  prereleases use `next` without changing `latest`. Reject channel regressions
+  and reconcile missing image aliases when recovering a partial release.
+
 ### Fixed
 
+- Publish and normalize the native `extensions.list` type filter in the Node
+  companion catalogue, allowing safe plugin selection through both MCP transports
+  while rejecting unsupported types and unknown properties.
+- Select a disabled, unprotected optional plugin from bounded explicit plugin pages in live extension-state validation, preserving its identity and original state for restoration when deterministic native ordering puts components on the first page.
+- Preserve object-valued native companion inputs and schema mappings, reject
+  arrays/null/scalars where objects are required, and retain nested empty values.
+  Keep exact zero-based native list pagination at partial/end boundaries and map
+  content-language `id` ordering to Joomla's real `lang_id` field
+  ([#44](https://github.com/joomengine/joomla-mcp/issues/44),
+  [PHP PR #16](https://github.com/joomengine/mcp_component/pull/16)).
+- Preserve stored empty and numeric-key JSON mappings in native item reads and
+  saved read-back, including article metadata and attributes that Joomla models
+  convert from Registry objects to arrays. Keep stored lists distinct and retain
+  strict write verification ([#44](https://github.com/joomengine/joomla-mcp/issues/44)).
+- Supply Joomla's empty-string `default_value` when a `fields.*.create` call
+  omits it, through both API and companion transports. Preserve caller-supplied
+  defaults and leave partial updates unchanged
+  ([#42](https://github.com/joomengine/joomla-mcp/issues/42)).
+- Resolve site-specific published custom fields for API article, content-category,
+  contact and user create/update plans, including the typed article tools,
+  while rejecting unrecognized keys and retaining approved field snapshots
+  ([#38](https://github.com/joomengine/joomla-mcp/issues/38)).
+
+- Preserve installed template inheritance when creating site or administrator
+  styles through the API or companion. Derive hidden `parent` and `inheritable`
+  fields from an existing style's native manifest before confirmation; refuse
+  missing, ambiguous, invalid, or changed metadata ([#40](https://github.com/joomengine/joomla-mcp/issues/40)).
+- Persist and verify native menu component IDs for API creates and updates,
+  including cross-component link changes. Approved corrective PATCHes and
+  stored-list verification retain honest partial/uncertain outcomes and prevent
+  same-key duplicate creates ([#39](https://github.com/joomengine/joomla-mcp/issues/39)).
 - Normalize combined article text to Joomla's native `introtext` and `fulltext`
   before planning API or companion creates and updates, fixing silently unchanged
   article bodies on Joomla 6 PATCH requests ([#31](https://github.com/joomengine/joomla-mcp/issues/31)).
@@ -82,3 +123,4 @@ follow Semantic Versioning.
 
 [0.6.0]: https://github.com/joomengine/joomla-mcp/releases/tag/v0.6.0
 [0.7.0]: https://github.com/joomengine/joomla-mcp/releases/tag/v0.7.0
+[0.8.0]: https://github.com/joomengine/joomla-mcp/releases/tag/v0.8.0

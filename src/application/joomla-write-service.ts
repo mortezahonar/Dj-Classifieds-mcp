@@ -9,6 +9,7 @@ import {
   joomlaCrudWriteActions,
   requiresJoomlaApiPatchCompletion,
   resolveJoomlaWriteRequest,
+  validateJoomlaMutationJson,
 } from '../catalog/action-catalog.js';
 import { sourceOnlyGateReason } from '../catalog/action-gates.js';
 import {
@@ -18,7 +19,7 @@ import {
   type CompanionActionDescriptor,
 } from '../catalog/companion-actions.js';
 import type { Configuration } from '../config/schema.js';
-import { normalizeArticleText } from '../contracts/article-text.js';
+import { articleTextDescription } from '../contracts/article-text.js';
 import {
   JoomlaApiClient,
   type JoomlaApiResponse,
@@ -45,6 +46,15 @@ import {
   type WritePermissionToolset,
 } from '../security/permission-grant-service.js';
 import { SiteRegistry } from './site-registry.js';
+import {
+  customFieldInput,
+  customFieldTarget,
+  encodeCustomFieldBody,
+  resolvePublishedCustomFields,
+  type ResolvedCustomField,
+} from './custom-fields.js';
+import { isTemplateStyleCreate, templateStyleInheritance } from './template-style-inheritance.js';
+import { executeMenuComponentBinding, isMenuItemWrite, prepareMenuComponentBinding } from './menu-component-binding.js';
 
 const idempotencyKeySchema = z.uuid();
 const crudWriteActionIds = new Set(joomlaCrudWriteActions.map((action) => action.id));
@@ -53,7 +63,7 @@ const articleFields = {
   title: z.string().trim().min(1).max(255),
   alias: z.string().trim().max(400).optional(),
   catid: z.int().positive(),
-  articletext: z.string().max(5_000_000).optional(),
+  articletext: z.string().max(5_000_000).optional().describe(articleTextDescription),
   introtext: z.string().max(2_000_000).optional(),
   fulltext: z.string().max(3_000_000).optional(),
   state: z.int().min(-2).max(1).optional(),
@@ -66,8 +76,8 @@ const articleFields = {
   publish_down: z.iso.datetime({ local: true }).nullable().optional(),
 } as const;
 
-export const ArticleCreateSchema = z.object(articleFields).strict();
-export const ArticleUpdateSchema = z.object(articleFields).partial().strict().refine((value) => Object.keys(value).length > 0, {
+export const ArticleCreateSchema = z.object(articleFields).catchall(z.unknown());
+export const ArticleUpdateSchema = z.object(articleFields).partial().catchall(z.unknown()).refine((value) => Object.keys(value).length > 0, {
   message: 'An article update must contain at least one field.',
 });
 
@@ -222,71 +232,33 @@ export class JoomlaWriteService {
     return grant;
   }
 
-  public async planArticle(input: ArticleWritePlanInput, principal = 'local-stdio'): Promise<ConfirmationPlan> {
-    const confirmation = this.requireConfirmation();
-    const site = this.sites.get(input.site);
-    this.sites.requireToolset(site, 'content.write');
-    idempotencyKeySchema.parse(input.idempotencyKey);
-
-    if (site.api === undefined) {
-      throw new Error(`Joomla site ${site.id} does not configure the API adapter.`);
-    }
-
-    let operation: PlannedOperation;
-
-    if (input.operation === 'create') {
-      const body = normalizeArticleText(ArticleCreateSchema.parse(input.data));
-      operation = {
-        site: site.id,
-        action: 'content.articles.create',
-        method: 'POST',
-        path: 'v1/content/articles',
-        body,
-        idempotencyKey: input.idempotencyKey,
-        summary: `Create article “${body.title}” in category ${body.catid}.`,
-      };
-    } else if (input.operation === 'update') {
-      const body = normalizeArticleText(ArticleUpdateSchema.parse(input.data));
-      operation = {
-        site: site.id,
-        action: 'content.articles.update',
-        method: 'PATCH',
-        path: `v1/content/articles/${positiveId(input.id)}`,
-        body,
-        ...(input.etag === undefined ? {} : { etag: safeEtag(input.etag) }),
-        idempotencyKey: input.idempotencyKey,
-        summary: `Update article ${input.id}; fields: ${Object.keys(body).sort().join(', ')}.`,
-      };
-    } else {
-      operation = {
-        site: site.id,
-        action: 'content.articles.delete',
-        method: 'DELETE',
-        path: `v1/content/articles/${positiveId(input.id)}`,
-        ...(input.etag === undefined ? {} : { etag: safeEtag(input.etag) }),
-        idempotencyKey: input.idempotencyKey,
-        summary: `Delete article ${input.id}. Joomla applies the resource model's delete lifecycle.`,
-      };
-    }
-
-    const grant = this.requirePermissions().authorize(principal, site.id, 'content.write');
-    operation = { ...operation, permissionGrantId: grant.id };
-    const plan = confirmation.create(operation, principal);
-    await this.audit?.write({
-      timestamp: new Date().toISOString(),
-      event: 'write.planned',
-      site: operation.site,
-      action: operation.action,
-      idempotencyKey: operation.idempotencyKey,
-      principalFingerprint: principalFingerprint(principal),
-      outcome: 'planned',
-    });
-    return plan;
+  public async planArticle(
+    input: ArticleWritePlanInput,
+    principal = 'local-stdio',
+    authorizeRead?: (site: string, toolset: string) => void,
+  ): Promise<ConfirmationPlan> {
+    if (input.operation !== 'delete') validateJoomlaMutationJson(input.data);
+    const data = input.operation === 'create'
+      ? ArticleCreateSchema.parse(input.data)
+      : input.operation === 'update' ? ArticleUpdateSchema.parse(input.data) : undefined;
+    const plan = await this.planAction({
+      site: input.site,
+      action: `content.articles.${input.operation}`,
+      input: {
+        ...(input.operation === 'create' ? {} : { id: positiveId(input.id) }),
+        ...(data === undefined ? {} : { data }),
+        ...(input.operation === 'create' || input.etag === undefined ? {} : { etag: safeEtag(input.etag) }),
+      },
+      transport: 'api',
+      idempotencyKey: input.idempotencyKey,
+    }, principal, authorizeRead);
+    return plan as ConfirmationPlan;
   }
 
   public async planAction(
     input: JoomlaActionWritePlanInput,
     principal = 'local-stdio',
+    authorizeRead?: (site: string, toolset: string) => void,
   ): Promise<ConfirmationPlan | WritePreview> {
     const gateReason = sourceOnlyGateReason(input.action);
 
@@ -309,12 +281,51 @@ export class JoomlaWriteService {
     const site = this.sites.get(input.site);
     this.sites.requireToolset(site, action.toolset);
     idempotencyKeySchema.parse(input.idempotencyKey);
-    const request = resolveJoomlaWriteRequest(action.id, input.input);
-    const actionInput = (action.id === 'content.articles.create' || action.id === 'content.articles.update') &&
-      request.body !== undefined
-      ? { ...input.input, data: request.body }
-      : input.input;
     const transport = this.selectTransport(site, input.transport ?? 'auto');
+    const dynamic = input.input['data'] === undefined ? undefined : customFieldInput(action.id, input.input['data']);
+    let customFields: readonly ResolvedCustomField[] = [];
+    if (dynamic !== undefined && dynamic.names.length > 0) {
+      if (transport !== 'api') throw new Error('Custom field values require the Joomla API transport; the companion does not support them.');
+      const readToolset = customFieldTarget(action.id)!.readToolset;
+      this.sites.requireToolset(site, readToolset);
+      authorizeRead?.(site.id, readToolset);
+      const published = await resolvePublishedCustomFields(action.id, site.api!, this.api);
+      customFields = published.filter((field) => dynamic.names.includes(field.name));
+      const unknown = dynamic.names.filter((name) => !customFields.some((field) => field.name === name));
+      if (unknown.length > 0) throw new Error(`Unsupported ${action.id} custom fields: ${unknown.join(', ')}. Only published fields in the action context are accepted.`);
+    }
+    let request = resolveJoomlaWriteRequest(
+      action.id,
+      dynamic === undefined ? input.input : { ...input.input, data: dynamic.data },
+      customFields.map((field) => field.name),
+    );
+    const body = request.body === undefined ? undefined : encodeCustomFieldBody(action.id, request.body, customFields);
+    request = { ...request, ...(body === undefined ? {} : { body }) };
+    const actionInput = (action.id === 'content.articles.create' || action.id === 'content.articles.update') && body !== undefined
+      ? { ...input.input, data: body }
+      : input.input;
+
+    if (transport === 'api' && isTemplateStyleCreate(action.id)) {
+      this.sites.requireToolset(site, 'structure.read');
+      authorizeRead?.(site.id, 'structure.read');
+      if (input.dryRun !== true) {
+        this.requirePermissions().authorize(principal, site.id, asWritePermissionToolset(action.toolset));
+      }
+      const inheritance = await templateStyleInheritance(this.api, site.api!, action.id, request.body?.['template']);
+      request = { ...request, body: { ...request.body, ...inheritance } };
+      if (Buffer.byteLength(JSON.stringify(request.body), 'utf8') > 1_048_576) {
+        throw new Error('Joomla API request body exceeds the 1048576-byte limit.');
+      }
+    }
+
+    let menuPreflight: Readonly<Record<string, unknown>> | undefined;
+    if (transport === 'api' && isMenuItemWrite(action.id)) {
+      this.sites.requireToolset(site, 'structure.read');
+      authorizeRead?.(site.id, 'structure.read');
+      const prepared = await prepareMenuComponentBinding(action.id, request, site.api!, this.api);
+      request = prepared.request;
+      menuPreflight = prepared.preflight;
+    }
 
     if (transport === 'cli') {
       if (!supportsCompanionWriteAction(action.id)) {
@@ -327,7 +338,9 @@ export class JoomlaWriteService {
     }
     const preflight = transport === 'cli'
       ? await this.preflightCompanionAction(site.cli!, action.id, actionInput)
-      : undefined;
+      : isTemplateStyleCreate(action.id)
+        ? { template: request.body?.['template'], parent: request.body?.['parent'], inheritable: request.body?.['inheritable'] }
+        : menuPreflight;
 
     const subject = action.operation === 'create'
       ? action.id.slice(0, -'.create'.length)
@@ -338,12 +351,14 @@ export class JoomlaWriteService {
       method: request.method,
       path: request.path,
       ...(request.body === undefined ? {} : { body: request.body }),
+      ...(customFields.length === 0 ? {} : { customFields }),
       ...(request.etag === undefined ? {} : { etag: request.etag }),
       idempotencyKey: input.idempotencyKey,
-      summary: `${action.operation[0]!.toUpperCase()}${action.operation.slice(1)} ${subject} via Joomla ${transport.toUpperCase()}.`,
+      summary: `${action.operation[0]!.toUpperCase()}${action.operation.slice(1)} ${subject} via Joomla ${transport.toUpperCase()}.` +
+        (menuPreflight === undefined ? '' : ' Includes an approved corrective PATCH for Joomla’s native component ID and bounded stored-menu verification.'),
       transport,
       toolset: action.toolset,
-      actionInput,
+      actionInput: menuPreflight === undefined ? actionInput : structuredClone({ ...input.input, data: request.body }),
       ...(preflight === undefined ? {} : { preflight }),
     };
 
@@ -360,6 +375,7 @@ export class JoomlaWriteService {
           fingerprint: operationHash(operation),
           transport,
           ...(operation.preflight === undefined ? {} : { preflight: operation.preflight }),
+          ...(operation.customFields === undefined ? {} : { customFields: operation.customFields }),
         },
       };
       await this.audit?.write({
@@ -471,6 +487,10 @@ export class JoomlaWriteService {
       const companionAction = getCompanionWriteAction(planned.action);
       const toolset = action?.toolset ?? companionAction?.toolset ?? planned.toolset ?? 'content.write';
       authorize?.(planned.site, toolset);
+      if ((planned.transport ?? 'api') === 'api' && (isTemplateStyleCreate(planned.action) || isMenuItemWrite(planned.action))) {
+        this.sites.requireToolset(this.sites.get(planned.site), 'structure.read');
+        authorize?.(planned.site, 'structure.read');
+      }
     });
     const action = getJoomlaWriteAction(operation.action);
     const companionAction = getCompanionWriteAction(operation.action);
@@ -522,6 +542,26 @@ export class JoomlaWriteService {
       const transport = operation.transport ?? 'api';
 
       try {
+        if (transport === 'api' && isMenuItemWrite(operation.action)) {
+          const execution = await executeMenuComponentBinding(site.api!, this.api, operation);
+          const value = { site: operation.site, action: operation.action,
+            idempotencyKey: operation.idempotencyKey, ...execution, idempotentReplay: false };
+          // Retain ambiguous or partial effects too. Replanning with the same
+          // key must never create a second menu after a successful first POST.
+          if (this.completed.size >= 10_000) {
+            const oldest = this.completed.keys().next().value as string | undefined;
+            if (oldest !== undefined) this.completed.delete(oldest);
+          }
+          this.completed.set(cacheKey, { fingerprint, value, completedAt: Date.now() });
+          await this.audit?.write({
+            timestamp: new Date().toISOString(), event: execution.outcome === 'verified' ? 'write.applied' : 'write.failed',
+            site: operation.site, action: operation.action, idempotencyKey: operation.idempotencyKey,
+            principalFingerprint: principalFingerprint(principal), transport,
+            outcome: execution.outcome === 'verified' ? 'success' : 'failure',
+            ...(execution.outcome === 'verified' ? {} : { detail: `Menu write outcome: ${execution.outcome}; inspect its stored-list verification before retrying.` }),
+          });
+          return value;
+        }
         const mutation = transport === 'api'
           ? await this.applyApi(site, operation)
           : await this.applyCli(site, operation);
@@ -581,6 +621,13 @@ export class JoomlaWriteService {
     }
 
     let body = operation.body;
+    if (isTemplateStyleCreate(operation.action)) {
+      this.sites.requireToolset(site, 'structure.read');
+      const inheritance = await templateStyleInheritance(this.api, site.api, operation.action, body?.['template']);
+      if (body?.['parent'] !== inheritance.parent || body?.['inheritable'] !== inheritance.inheritable) {
+        throw new Error('Template inheritance changed after planning; create a new confirmation plan.');
+      }
+    }
     if (
       operation.method === 'PATCH' &&
       body !== undefined &&
