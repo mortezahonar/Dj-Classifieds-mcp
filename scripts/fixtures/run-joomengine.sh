@@ -222,7 +222,7 @@ if (describe.protocol !== 'joomla-mcp/1' || describe.companion?.version !== '0.8
   throw new Error('The installed companion returned an unexpected protocol or package version.');
 }
 
-if (!names.has('system.info') || !names.has('content.articles.list') || !names.has('djclassifieds.items.list') || names.size < 266) {
+if (!names.has('system.info') || !names.has('content.articles.list') || !names.has('djclassifieds.items.list') || names.size !== 267) {
   throw new Error('The installed companion did not advertise the reviewed action catalogue.');
 }
 
@@ -375,6 +375,8 @@ const toolsets = [
   'maintenance.admin',
   'core-update',
   'cli.discovery',
+  'djclassifieds.read',
+  'djclassifieds.write',
 ];
 const configuration = {
   defaultSite: 'fixture',
