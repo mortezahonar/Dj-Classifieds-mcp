@@ -122,7 +122,7 @@ assert_contains scripts/fixtures/run-joomengine.sh "names.size !== 267"
 assert_contains scripts/fixtures/run-joomengine.sh "'djclassifieds.read'"
 assert_contains scripts/fixtures/run-joomengine.sh "'djclassifieds.write'"
 assert_contains scripts/fixtures/run-joomengine.sh "family !== 'djclassifieds'"
-assert_contains scripts/fixtures/run-joomengine.sh '--families "$live_families"'
+assert_contains scripts/fixtures/run-joomengine.sh "--families \"\$live_families\""
 
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck scripts/deploy/compose-rollout.sh scripts/deploy/systemd-rollout.sh scripts/deploy/validate.sh scripts/fixtures/run-joomengine.sh tests/deploy/static-deployment.test.sh tests/fixtures/static-joomengine.test.sh
