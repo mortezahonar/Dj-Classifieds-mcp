@@ -164,6 +164,71 @@ describe('live-test runner', () => {
     }, counts)).toBe(0);
   });
 
+  it('creates and closes each MCP transport around its own lanes so later sessions cannot expire idle', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'joomla-mcp-live-transport-lifecycle-'));
+    const configurationFile = join(directory, 'sites.json');
+    await writeFile(configurationFile, `${JSON.stringify({
+      defaultSite: 'fixture',
+      sites: {
+        fixture: {
+          toolsets: ['discovery'],
+          api: {
+            baseUrl: 'https://joomla.example',
+            tokenEnv: 'LIVE_TEST_UNUSED_API_TOKEN',
+          },
+        },
+      },
+    }, null, 2)}\n`);
+    const lifecycle: string[] = [];
+    const oldToken = process.env['LIVE_TEST_UNUSED_API_TOKEN'];
+    process.env['LIVE_TEST_UNUSED_API_TOKEN'] = 'fixture-unused-api-token';
+
+    try {
+      const summary = await runLiveTest({
+        configurationFile,
+        site: 'fixture',
+        outputDirectory: join(directory, 'evidence'),
+        profile: 'read',
+        joomlaPaths: ['api'],
+        mcpTransports: ['stdio', 'http'],
+        families: ['no-matching-family'],
+        nonInteractive: true,
+        confirmMutations: false,
+        disposable: false,
+        cleanup: false,
+        retainDemo: false,
+        failFast: false,
+        seed: 'transport-lifecycle',
+      }, {
+        createSession: async (kind) => {
+          lifecycle.push(`create:${kind}`);
+          return {
+            kind,
+            call: async (call) => {
+              lifecycle.push(`call:${kind}:${call.name}`);
+              return {};
+            },
+            close: async () => {
+              lifecycle.push(`close:${kind}`);
+            },
+            diagnostics: () => ({ kind }),
+          };
+        },
+        progress: (event) => {
+          if (event.kind === 'lane-complete') lifecycle.push(`lane-complete:${event.transport}`);
+        },
+      });
+
+      expect(summary.exitCode).toBe(0);
+      expect(lifecycle.indexOf('lane-complete:stdio')).toBeLessThan(lifecycle.indexOf('close:stdio'));
+      expect(lifecycle.indexOf('close:stdio')).toBeLessThan(lifecycle.indexOf('create:http'));
+      expect(summary.environment.transportDiagnostics).toEqual([{ kind: 'stdio' }, { kind: 'http' }]);
+    } finally {
+      if (oldToken === undefined) delete process.env['LIVE_TEST_UNUSED_API_TOKEN'];
+      else process.env['LIVE_TEST_UNUSED_API_TOKEN'] = oldToken;
+    }
+  });
+
   it('runs catalogue CRUD through the real HTTP MCP gateway and Joomla API adapter', async () => {
     const resources = new Map<string, Map<number, Record<string, unknown>>>([
       ['v1/content/categories', new Map()],

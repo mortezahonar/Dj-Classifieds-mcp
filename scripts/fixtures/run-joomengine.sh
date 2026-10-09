@@ -411,8 +411,20 @@ writeFileSync(file, `${JSON.stringify(configuration, null, 2)}\n`, { mode: 0o600
 NODE
 
 rm -f -- "$api_token_file"
-
 npm run build --silent
+live_families="$(node --input-type=module <<'NODE'
+import { liveScenarioCatalog } from './dist/live-test/catalog.js';
+
+const families = [...new Set(liveScenarioCatalog().map((scenario) => scenario.domain))].sort();
+if (!families.includes('djclassifieds')) {
+  throw new Error('The live-test catalogue is missing its DJ-Classifieds family.');
+}
+process.stdout.write(families.filter((family) => family !== 'djclassifieds').join(','));
+NODE
+)"
+[[ -n "$live_families" ]] || fail 'no base Joomla live-test families were selected'
+printf 'JMCP-FIXTURE state=INFO phase=live-test message=%q\n' \
+  'excluding DJ-Classifieds integration scenarios because the pinned Joomla image does not include the optional component; companion provider tests still run'
 printf 'JMCP-FIXTURE state=START phase=article-bodies message=%q\n' \
   'verifying article body persistence through generic and typed MCP API writes'
 node "${SCRIPT_DIRECTORY}/verify-article-bodies.mjs" \
@@ -429,7 +441,7 @@ node "${REPOSITORY_ROOT}/dist/bin/joomla-mcp-live-test.js" \
   --profile full \
   --joomla-path all \
   --mcp-transport all \
-  --families all \
+  --families "$live_families" \
   --seed "fixture-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}" \
   --output "$live_test_directory" \
   --repository-commit "${GITHUB_SHA:-local}" \

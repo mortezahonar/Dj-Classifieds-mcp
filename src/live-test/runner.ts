@@ -343,13 +343,18 @@ export async function runLiveTest(
           transport: kind,
         },
         heartbeatSeconds,
-        async () => kind === 'stdio'
-          ? await createStdioLiveSession({
-              configurationFile: options.configurationFile,
-              ...(options.stdioCommand === undefined ? {} : { command: options.stdioCommand }),
-              ...(options.stdioArguments === undefined ? {} : { arguments: options.stdioArguments }),
-            })
-          : await createHttpLiveSession(configuration),
+        async () => {
+          if (dependencies.createSession !== undefined) {
+            return dependencies.createSession(kind, configuration, options);
+          }
+          return kind === 'stdio'
+            ? await createStdioLiveSession({
+                configurationFile: options.configurationFile,
+                ...(options.stdioCommand === undefined ? {} : { command: options.stdioCommand }),
+                ...(options.stdioArguments === undefined ? {} : { arguments: options.stdioArguments }),
+              })
+            : await createHttpLiveSession(configuration);
+        },
       );
       sessions.push(session);
       safeProgressReport(progress, {
@@ -358,9 +363,6 @@ export async function runLiveTest(
         transport: kind,
         message: 'MCP transport is ready.',
       });
-    }
-
-    for (const session of sessions) {
       activeTransport = session.kind;
       await withProgressOperation(
         progress,
@@ -452,54 +454,71 @@ export async function runLiveTest(
           message: `Completed lane with ${state.created.length} retained records.`,
         });
       }
-    }
-
-    for (const session of sessions) {
-      if (!options.joomlaPaths.includes('api')) continue;
-      for (const scenario of selected.filter((candidate) => candidate.sourceOnlyReason !== undefined)) {
-        const id = `${String(++sequence).padStart(4, '0')}-${session.kind}-api-${safeSegment(scenario.id)}-source-gate`;
-        safeProgressReport(progress, {
-          kind: 'attempt-start',
-          timestamp: new Date().toISOString(),
-          attemptId: id,
-          scenarioId: scenario.id,
-          phase: 'source-gate',
-          transport: session.kind,
-          joomlaPath: 'api',
-          elapsedMs: 0,
-        });
-        attempts.push(Object.freeze({
-          id,
-          scenarioId: scenario.id,
-          title: scenario.title,
-          domain: scenario.domain,
-          risk: scenario.risk,
-          toolset: scenario.toolset,
-          operation: scenario.operation,
-          mcpTransport: session.kind,
-          joomlaPath: 'api',
-          phase: 'source-gate',
-          status: 'SOURCE_ONLY_GATED',
-          startedAt: new Date().toISOString(),
-          durationMs: 0,
-          reason: scenario.sourceOnlyReason!,
-          expected: 'MCP rejects the source-catalogued action before transport dispatch.',
-          reproduction: reproduction(scenario, session.kind, 'api'),
-          ...(scenario.source === undefined ? {} : { source: scenario.source }),
-        }));
-        safeProgressReport(progress, {
-          kind: 'attempt-result',
-          timestamp: new Date().toISOString(),
-          attemptId: id,
-          scenarioId: scenario.id,
-          phase: 'source-gate',
-          transport: session.kind,
-          joomlaPath: 'api',
-          elapsedMs: 0,
-          status: 'SOURCE_ONLY_GATED',
-          reason: scenario.sourceOnlyReason!,
-        });
+      if (options.joomlaPaths.includes('api')) {
+        for (const scenario of selected.filter((candidate) => candidate.sourceOnlyReason !== undefined)) {
+          const id = `${String(++sequence).padStart(4, '0')}-${session.kind}-api-${safeSegment(scenario.id)}-source-gate`;
+          safeProgressReport(progress, {
+            kind: 'attempt-start',
+            timestamp: new Date().toISOString(),
+            attemptId: id,
+            scenarioId: scenario.id,
+            phase: 'source-gate',
+            transport: session.kind,
+            joomlaPath: 'api',
+            elapsedMs: 0,
+          });
+          attempts.push(Object.freeze({
+            id,
+            scenarioId: scenario.id,
+            title: scenario.title,
+            domain: scenario.domain,
+            risk: scenario.risk,
+            toolset: scenario.toolset,
+            operation: scenario.operation,
+            mcpTransport: session.kind,
+            joomlaPath: 'api',
+            phase: 'source-gate',
+            status: 'SOURCE_ONLY_GATED',
+            startedAt: new Date().toISOString(),
+            durationMs: 0,
+            reason: scenario.sourceOnlyReason!,
+            expected: 'MCP rejects the source-catalogued action before transport dispatch.',
+            reproduction: reproduction(scenario, session.kind, 'api'),
+            ...(scenario.source === undefined ? {} : { source: scenario.source }),
+          }));
+          safeProgressReport(progress, {
+            kind: 'attempt-result',
+            timestamp: new Date().toISOString(),
+            attemptId: id,
+            scenarioId: scenario.id,
+            phase: 'source-gate',
+            transport: session.kind,
+            joomlaPath: 'api',
+            elapsedMs: 0,
+            status: 'SOURCE_ONLY_GATED',
+            reason: scenario.sourceOnlyReason!,
+          });
+        }
       }
+
+      await withProgressOperation(
+        progress,
+        {
+          operationId: `close-${session.kind}`,
+          operation: 'Close MCP transport',
+          transport: session.kind,
+        },
+        heartbeatSeconds,
+        async () => session.close(),
+      );
+      transportDiagnostics.push(session.diagnostics());
+      sessions.splice(sessions.indexOf(session), 1);
+      safeProgressReport(progress, {
+        kind: 'session-close',
+        timestamp: new Date().toISOString(),
+        transport: session.kind,
+        message: 'MCP transport closed.',
+      });
     }
   } catch (error) {
     const reason = errorMessage(error);

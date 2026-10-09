@@ -1,4 +1,4 @@
-import type { Toolset } from '../config/schema.js';
+import type { Configuration, Toolset } from '../config/schema.js';
 import type { LiveProgressReporter } from './progress.js';
 
 export const liveTestStatuses = [
@@ -63,6 +63,11 @@ export interface LiveTestOptions extends LiveTestSelection {
 export interface LiveTestRunnerDependencies {
   readonly progress?: LiveProgressReporter;
   readonly heartbeatSeconds?: number;
+  readonly createSession?: (
+    kind: LiveMcpTransport,
+    configuration: Configuration,
+    options: LiveTestOptions,
+  ) => Promise<LiveMcpSession>;
 }
 
 export interface LiveTestAttempt {
