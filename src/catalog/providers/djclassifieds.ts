@@ -5,13 +5,15 @@ import type {
   JoomlaNativeCapability,
 } from '../companion-actions.js';
 
+const djClassifiedsStates: readonly number[] = Object.freeze([-2, 0, 1, 2]);
+
 const djclassifiedsListInputSchema: JsonSchema = Object.freeze({
   type: 'object',
   properties: Object.freeze({
     offset: Object.freeze({ type: 'integer', minimum: 0, maximum: 1_000_000, default: 0 }),
     limit: Object.freeze({ type: 'integer', minimum: 1, maximum: 100, default: 20 }),
     search: Object.freeze({ type: 'string', maxLength: 200 }),
-    state: Object.freeze({ type: 'integer', minimum: -2, maximum: 2 }),
+    state: Object.freeze({ type: 'integer', enum: djClassifiedsStates }),
   }),
   additionalProperties: false,
 });
@@ -29,7 +31,7 @@ const djclassifiedsStateInputSchema: JsonSchema = Object.freeze({
   type: 'object',
   properties: Object.freeze({
     id: Object.freeze({ type: 'integer', minimum: 1 }),
-    state: Object.freeze({ type: 'integer', enum: Object.freeze([-2, 0, 1, 2]) }),
+    state: Object.freeze({ type: 'integer', enum: djClassifiedsStates }),
   }),
   required: Object.freeze(['id', 'state']),
   additionalProperties: false,
@@ -237,7 +239,11 @@ export function normalizeDjClassifiedsReadInput(
       limit: optionalInteger(input['limit'], 'limit', 1, 100, 20),
     };
     if (input['search'] !== undefined) normalized['search'] = boundedText(input['search'], 'search', 200);
-    if (input['state'] !== undefined) normalized['state'] = boundedInteger(input['state'], 'state', -2, 2);
+    if (input['state'] !== undefined) {
+      const state = boundedInteger(input['state'], 'state', -2, 2);
+      if (!djClassifiedsStates.includes(state)) throw new Error('state must be one of -2, 0, 1, or 2.');
+      normalized['state'] = state;
+    }
     return Object.freeze(normalized);
   }
 
@@ -253,7 +259,7 @@ export function normalizeDjClassifiedsWriteInput(
   if (actionId.endsWith('.state')) {
     rejectUnknown(input, ['id', 'state']);
     const state = boundedInteger(input['state'], 'state', -2, 2);
-    if (![-2, 0, 1, 2].includes(state)) throw new Error('state must be one of -2, 0, 1, or 2.');
+    if (!djClassifiedsStates.includes(state)) throw new Error('state must be one of -2, 0, 1, or 2.');
     return Object.freeze({
       id: boundedInteger(input['id'], 'id', 1, 2_147_483_647),
       state,

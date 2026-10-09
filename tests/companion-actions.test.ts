@@ -80,6 +80,21 @@ describe('Joomla-native companion action catalogue', () => {
     expect(() => normalizeCompanionReadInput('shell.run', {})).toThrow('Unknown');
   });
 
+  it('matches DJ-Classifieds list state values to the native enum', async () => {
+    const php = await readFile(new URL('../companion/plugin/src/Action/CoreEntityAction.php', import.meta.url), 'utf8');
+    const nativeStatesMatch = php.match(/private const STATES = \[([^\]]+)\];/u);
+    expect(nativeStatesMatch).not.toBeNull();
+    const nativeStates = [...nativeStatesMatch![1]!.matchAll(/-?\d+/gu)].map((match) => Number(match[0]));
+    const stateSchema = getCompanionReadAction('djclassifieds.items.list')!.inputSchema.properties['state'];
+
+    expect(stateSchema).toMatchObject({ type: 'integer', enum: nativeStates });
+    for (const state of nativeStates) {
+      expect(normalizeCompanionReadInput('djclassifieds.items.list', { state })).toMatchObject({ state });
+    }
+    expect(() => normalizeCompanionReadInput('djclassifieds.items.list', { state: -1 }))
+      .toThrow('state must be one of -2, 0, 1, or 2');
+  });
+
   it('matches the native extension type schema without widening other read actions', async () => {
     const types = ['', 'component', 'module', 'plugin', 'template', 'library', 'file', 'package', 'language'];
     const schema = getCompanionReadAction('extensions.list')!.inputSchema;
