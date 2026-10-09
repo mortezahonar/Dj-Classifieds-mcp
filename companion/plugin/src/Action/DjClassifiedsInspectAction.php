@@ -77,8 +77,9 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
         $maxSampleRows = Input::integer($input, 'maxSampleRows', 5, 1, 50);
 
         $db = $this->database();
+        $driver = $this->databaseServerType($db);
         $prefix = (string) $db->getPrefix();
-        $tables = $this->tables($db, $prefix, $maxTables, $maxColumns);
+        $tables = $this->tables($db, $prefix, $maxTables, $maxColumns, $driver);
 
         return [
             'meta' => [
@@ -118,6 +119,24 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
         return $db;
     }
 
+    private function databaseServerType(DatabaseInterface $db): string
+    {
+        try {
+            $type = strtolower($db->getServerType());
+        } catch (Throwable) {
+            $type = '';
+        }
+
+        if (!in_array($type, ['mysql', 'postgresql'], true)) {
+            throw new ActionException(
+                'UNSUPPORTED_DATABASE_DRIVER',
+                'DJ-Classifieds inspection supports Joomla MySQL/MariaDB and PostgreSQL database drivers only.',
+            );
+        }
+
+        return $type;
+    }
+
     private function componentVersion(DatabaseInterface $db): ?string
     {
         $query = 'SELECT manifest_cache FROM #__extensions'
@@ -148,9 +167,9 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
     }
 
     /** @return list<array<string, mixed>> */
-    private function tables(DatabaseInterface $db, string $prefix, int $maxTables, int $maxColumns): array
+    private function tables(DatabaseInterface $db, string $prefix, int $maxTables, int $maxColumns, string $driver): array
     {
-        $names = $this->tableNames($db, $prefix);
+        $names = $this->tableNames($db, $prefix, $driver);
 
         if ($names === []) {
             throw new ActionException('COMPONENT_NOT_FOUND', 'DJ-Classifieds tables were not found on this site.');
@@ -173,7 +192,7 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
                 'role' => $this->role($columns),
                 'roleNote' => 'inferred from column shape',
                 'columns' => $columns,
-                'indexes' => $this->indexes($db, $name),
+                'indexes' => $this->indexes($db, $name, $driver),
                 'references' => $this->references($known, $prefix, $columns),
             ];
         }
@@ -182,16 +201,20 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
     }
 
     /** @return list<string> */
-    private function tableNames(DatabaseInterface $db, string $prefix): array
+    private function tableNames(DatabaseInterface $db, string $prefix, string $driver): array
     {
-        $query = 'SELECT TABLE_NAME FROM information_schema.TABLES'
-            . ' WHERE TABLE_SCHEMA = DATABASE()'
-            . ' AND TABLE_NAME LIKE ' . $db->quote($prefix . self::TABLE_PREFIX_MARKER . '%')
-            . ' ORDER BY TABLE_NAME';
-        $db->setQuery($query);
-
         try {
-            $rows = $db->loadColumn();
+            if ($driver === 'postgresql') {
+                $db->setQuery(
+                    'SELECT table_name FROM information_schema.tables'
+                    . ' WHERE table_schema = current_schema()'
+                    . ' AND table_type = ' . $db->quote('BASE TABLE')
+                    . ' ORDER BY table_name',
+                );
+                $rows = $db->loadColumn();
+            } else {
+                $rows = $db->getTableList();
+            }
         } catch (Throwable) {
             throw new ActionException('DATABASE_QUERY_FAILED', 'DJ-Classifieds tables could not be listed.');
         }
@@ -201,13 +224,19 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
         }
 
         $names = [];
+        $tablePrefix = $prefix . self::TABLE_PREFIX_MARKER;
 
         foreach ($rows as $name) {
-            if (is_string($name) && preg_match('/^[A-Za-z0-9_]+$/', $name) === 1) {
+            if (
+                is_string($name)
+                && str_starts_with($name, $tablePrefix)
+                && preg_match('/^[A-Za-z0-9_]+$/', $name) === 1
+            ) {
                 $names[] = $name;
             }
         }
 
+        $names = array_values(array_unique($names));
         sort($names, SORT_STRING);
 
         return $names;
@@ -216,10 +245,8 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
     /** @return list<array<string, mixed>> */
     private function columns(DatabaseInterface $db, string $name, int $maxColumns): array
     {
-        $db->setQuery('SHOW FULL COLUMNS FROM ' . $db->quoteName($name));
-
         try {
-            $rows = $db->loadAssocList();
+            $rows = $db->getTableColumns($name, false);
         } catch (Throwable) {
             throw new ActionException('DATABASE_QUERY_FAILED', sprintf('Columns for table "%s" could not be read.', $name));
         }
@@ -231,9 +258,13 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
         /** @var list<array<string, mixed>> $columns */
         $columns = [];
 
-        foreach ($rows as $row) {
+        foreach ($rows as $key => $row) {
             if (count($columns) >= $maxColumns) {
                 break;
+            }
+
+            if (is_object($row)) {
+                $row = get_object_vars($row);
             }
 
             if (!is_array($row)) {
@@ -241,7 +272,7 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
             }
 
             $row = array_change_key_case($row, CASE_LOWER);
-            $field = $row['field'] ?? null;
+            $field = $row['field'] ?? $row['column_name'] ?? (is_string($key) ? $key : null);
 
             if (!is_string($field) || preg_match('/^[A-Za-z0-9_]+$/', $field) !== 1) {
                 continue;
@@ -253,7 +284,7 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
                 'collation' => is_string($row['collation'] ?? null) ? $row['collation'] : null,
                 'null' => strtoupper((string) ($row['null'] ?? '')) === 'YES',
                 'key' => is_string($row['key'] ?? null) ? $row['key'] : null,
-                'default' => ($row['default'] ?? null) === null ? null : (string) $row['default'],
+                'default' => !isset($row['default']) ? null : (string) $row['default'],
                 'extra' => is_string($row['extra'] ?? null) ? $row['extra'] : null,
             ];
         }
@@ -262,30 +293,55 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
     }
 
     /** @return list<array<string, mixed>> */
-    private function indexes(DatabaseInterface $db, string $name): array
+    private function indexes(DatabaseInterface $db, string $name, string $driver): array
     {
-        $db->setQuery('SHOW INDEX FROM ' . $db->quoteName($name));
-
         try {
-            $rows = $db->loadAssocList();
+            if ($driver === 'postgresql') {
+                $db->setQuery(
+                    'SELECT index_class.relname AS index_name,'
+                    . ' index_info.indisunique AS is_unique,'
+                    . ' access_method.amname AS index_type,'
+                    . ' key_column.ordinality AS seq_in_index,'
+                    . ' COALESCE(attribute.attname, pg_catalog.pg_get_indexdef('
+                    . 'index_info.indexrelid, key_column.ordinality::integer, true)) AS column_name'
+                    . ' FROM pg_catalog.pg_class AS table_class'
+                    . ' JOIN pg_catalog.pg_namespace AS table_schema ON table_schema.oid = table_class.relnamespace'
+                    . ' JOIN pg_catalog.pg_index AS index_info ON index_info.indrelid = table_class.oid'
+                    . ' JOIN pg_catalog.pg_class AS index_class ON index_class.oid = index_info.indexrelid'
+                    . ' JOIN pg_catalog.pg_am AS access_method ON access_method.oid = index_class.relam'
+                    . ' CROSS JOIN LATERAL unnest(index_info.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)'
+                    . ' LEFT JOIN pg_catalog.pg_attribute AS attribute'
+                    . ' ON attribute.attrelid = table_class.oid AND attribute.attnum = key_column.attnum'
+                    . ' WHERE table_schema.nspname = current_schema()'
+                    . ' AND table_class.relname = ' . $db->quote($name)
+                    . ' ORDER BY index_class.relname, key_column.ordinality',
+                );
+                $rows = $db->loadAssocList();
+            } else {
+                $rows = $db->getTableKeys($name);
+            }
         } catch (Throwable) {
-            return [];
+            throw new ActionException('DATABASE_QUERY_FAILED', sprintf('Indexes for table "%s" could not be read.', $name));
         }
 
         if (!is_array($rows)) {
-            return [];
+            throw new ActionException('DATABASE_QUERY_FAILED', sprintf('Indexes for table "%s" could not be read.', $name));
         }
 
         /** @var array<string, array<string, mixed>> $grouped */
         $grouped = [];
 
         foreach ($rows as $row) {
+            if (is_object($row)) {
+                $row = get_object_vars($row);
+            }
+
             if (!is_array($row)) {
                 continue;
             }
 
             $row = array_change_key_case($row, CASE_LOWER);
-            $keyName = $row['key_name'] ?? null;
+            $keyName = $driver === 'postgresql' ? ($row['index_name'] ?? null) : ($row['key_name'] ?? null);
             $columnName = $row['column_name'] ?? null;
             $sequence = (int) ($row['seq_in_index'] ?? 0);
 
@@ -296,7 +352,9 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
             if (!isset($grouped[$keyName])) {
                 $grouped[$keyName] = [
                     'name' => $keyName,
-                    'unique' => (int) ($row['non_unique'] ?? 1) === 0,
+                    'unique' => $driver === 'postgresql'
+                        ? in_array(strtolower((string) ($row['is_unique'] ?? '')), ['1', 't', 'true', 'yes'], true)
+                        : (int) ($row['non_unique'] ?? 1) === 0,
                     'type' => is_string($row['index_type'] ?? null) ? $row['index_type'] : null,
                     'columns' => [],
                 ];
