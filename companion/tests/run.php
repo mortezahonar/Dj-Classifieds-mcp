@@ -22,6 +22,7 @@ use VDM\Plugin\Console\JoomlaMcp\Domain\ActionException;
 use VDM\Plugin\Console\JoomlaMcp\Domain\ActionRegistry;
 use VDM\Plugin\Console\JoomlaMcp\Joomla\JoomlaActionRegistryFactory;
 use VDM\Plugin\Console\JoomlaMcp\Joomla\CoreEntityCatalogue;
+use VDM\Plugin\Console\JoomlaMcp\Joomla\DjClassifiedsCatalogue;
 use VDM\Plugin\Console\JoomlaMcp\Protocol\DescriptionService;
 use VDM\Plugin\Console\JoomlaMcp\Protocol\DispatchService;
 use VDM\Plugin\Console\JoomlaMcp\Protocol\RequestDecoder;
@@ -401,6 +402,74 @@ test('generic list action bounds model state and strips non-allowlisted output',
     expect($model->state['filter.search'] === 'ada', 'Search was not applied.');
     expect(!array_key_exists('password', $result['items'][0]), 'A user password escaped the read allowlist.');
     expect(!str_contains(json_encode($result, JSON_THROW_ON_ERROR), 'must-not-leak'), 'A secret value escaped normalization.');
+});
+
+test('DJ-Classifieds get and list redact IP addresses and tokens at every output depth', static function (): void {
+    $entity = array_values(array_filter(
+        DjClassifiedsCatalogue::all(),
+        static fn ($candidate): bool => $candidate->id === 'djclassifieds.items',
+    ))[0];
+    $source = [
+        'id' => 73,
+        'name' => 'Visible listing',
+        'ip_address' => '198.51.100.41',
+        'token' => 'DJC-TOKEN-SECRET-ROOT',
+        'description' => [
+            'ip_address' => '198.51.100.42',
+            'token' => 'DJC-TOKEN-SECRET-NESTED',
+            'visible' => 'safe content',
+        ],
+    ];
+    $model = new class ($source) {
+        /** @var array<string, mixed> */
+        public array $state = [];
+
+        /** @param array<string, mixed> $source */
+        public function __construct(private array $source)
+        {
+        }
+
+        public function setState(string $key, mixed $value): void
+        {
+            $this->state[$key] = $value;
+        }
+
+        public function getItems(): array
+        {
+            return [(object) $this->source];
+        }
+
+        public function getTotal(): int
+        {
+            return 1;
+        }
+
+        public function getItem(int $id): object
+        {
+            return (object) (['id' => $id] + $this->source);
+        }
+    };
+    $provider = new class ($model) implements ModelProviderInterface {
+        public function __construct(private object $model)
+        {
+        }
+
+        public function administrator(string $component, string $modelName, ?string $legacyModelPrefix = null): object
+        {
+            expect($component === 'com_djclassifieds' && in_array($modelName, ['Items', 'Item'], true), 'Unexpected DJ-Classifieds read model.');
+
+            return $this->model;
+        }
+    };
+    $list = (new CoreEntityAction($entity, 'list', $provider))->execute([]);
+    $get = (new CoreEntityAction($entity, 'get', $provider))->execute(['id' => 73]);
+    $encoded = json_encode([$list, $get], JSON_THROW_ON_ERROR);
+
+    foreach (['198.51.100.41', '198.51.100.42', 'DJC-TOKEN-SECRET-ROOT', 'DJC-TOKEN-SECRET-NESTED'] as $sensitiveValue) {
+        expect(!str_contains($encoded, $sensitiveValue), sprintf('Sensitive DJ-Classifieds value leaked: %s.', $sensitiveValue));
+    }
+    expect(!array_key_exists('ip_address', $list['items'][0]) && !array_key_exists('token', $list['items'][0]), 'Sensitive fields escaped the list output.');
+    expect(!array_key_exists('ip_address', $get['item']) && !array_key_exists('token', $get['item']), 'Sensitive fields escaped the get output.');
 });
 
 test('generic writes preview by default and require the signed edge marker to apply', static function (): void {

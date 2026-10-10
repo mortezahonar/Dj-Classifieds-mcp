@@ -16,6 +16,7 @@ use VDM\Plugin\Console\JoomlaMcp\Domain\ActionDescriptor;
 use VDM\Plugin\Console\JoomlaMcp\Domain\ActionException;
 use VDM\Plugin\Console\JoomlaMcp\Domain\CoreEntityDefinition;
 use VDM\Plugin\Console\JoomlaMcp\Domain\Input;
+use VDM\Plugin\Console\JoomlaMcp\Domain\ReadOutputPolicy;
 use VDM\Plugin\Console\JoomlaMcp\Joomla\ModelListPage;
 use VDM\Plugin\Console\JoomlaMcp\Joomla\TemplateStyleInheritance;
 
@@ -451,6 +452,10 @@ final readonly class CoreEntityAction implements ActionInterface
         $result = [];
 
         foreach ($this->entity->readFields as $field) {
+            if (ReadOutputPolicy::isSensitiveField($field)) {
+                continue;
+            }
+
             $result[$field] = $this->safeOutput($source[$field] ?? null);
         }
 
@@ -581,7 +586,8 @@ final readonly class CoreEntityAction implements ActionInterface
         $result = [];
 
         foreach ($value as $key => $nested) {
-            if (!is_int($key) && !is_string($key)) {
+            if ((!is_int($key) && !is_string($key))
+                || (is_string($key) && ReadOutputPolicy::isSensitiveField($key))) {
                 continue;
             }
 

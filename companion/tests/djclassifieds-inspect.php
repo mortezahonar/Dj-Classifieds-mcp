@@ -68,6 +68,11 @@ namespace {
             return "'" . str_replace("'", "''", $value) . "'";
         }
 
+        public function quoteName(string $name): string
+        {
+            return '"' . $name . '"';
+        }
+
         public function setQuery(string $query): void
         {
             $this->query = $query;
@@ -166,6 +171,15 @@ namespace {
                 ];
             }
 
+            if (str_starts_with($this->query, 'SELECT * FROM')) {
+                return [[
+                    'id' => 73,
+                    'title' => 'Visible listing',
+                    'ip_address' => '203.0.113.17',
+                    'token' => 'DJC-INSPECT-TOKEN-SECRET',
+                ]];
+            }
+
             expect(str_contains($this->query, 'FROM #__extensions'), 'Unexpected associative query in inspect regression test.');
             return [];
         }
@@ -231,5 +245,16 @@ namespace {
         }
 
         expect($database->queries === [], 'Unsupported driver reached database metadata queries.');
+    });
+
+    test('DJ-Classifieds inspect sample rows redact IP addresses and tokens', static function (): void {
+        $result = inspectTestAction(new DjClassifiedsInspectTestDatabase())->execute(['sampleRows' => true]);
+        $sample = $result['sampleRows']['prefix_djcf_ads'][0] ?? null;
+        $encoded = json_encode($result, JSON_THROW_ON_ERROR);
+
+        expect(is_array($sample), 'DJ-Classifieds inspect did not return its requested sample row.');
+        expect(!array_key_exists('ip_address', $sample) && !array_key_exists('token', $sample), 'Sensitive fields escaped the inspect sample row.');
+        expect(!str_contains($encoded, '203.0.113.17'), 'An IP address escaped the inspect output.');
+        expect(!str_contains($encoded, 'DJC-INSPECT-TOKEN-SECRET'), 'A token escaped the inspect output.');
     });
 }

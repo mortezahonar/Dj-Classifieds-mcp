@@ -10,6 +10,7 @@ use VDM\Plugin\Console\JoomlaMcp\Contract\ActionInterface;
 use VDM\Plugin\Console\JoomlaMcp\Domain\ActionDescriptor;
 use VDM\Plugin\Console\JoomlaMcp\Domain\ActionException;
 use VDM\Plugin\Console\JoomlaMcp\Domain\Input;
+use VDM\Plugin\Console\JoomlaMcp\Domain\ReadOutputPolicy;
 
 /**
  * Inspects the live DJ-Classifieds installation and returns a complete,
@@ -602,7 +603,8 @@ final readonly class DjClassifiedsInspectAction implements ActionInterface
         $result = [];
 
         foreach ($row as $key => $value) {
-            if (!is_string($key) || preg_match('/^[A-Za-z0-9_]+$/', $key) !== 1) {
+            if (!is_string($key) || preg_match('/^[A-Za-z0-9_]+$/', $key) !== 1
+                || ReadOutputPolicy::isSensitiveField($key)) {
                 continue;
             }
 
